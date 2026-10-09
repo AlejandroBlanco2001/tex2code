@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/isaac/dev/latex-ia && make fix 2>&1 || true",
+            "statusMessage": "Running ruff fix + format..."
+          }
+        ]
+      }
+    ]
+  }
+}
