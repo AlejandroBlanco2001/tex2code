@@ -125,9 +125,26 @@ def _process_env(
 
 
 def _extract_marker_id(node: LatexEnvironmentNode) -> str | None:
-    """Return the optional label argument of a marker environment, or None."""
+    """Return the optional label argument of a marker environment, or None.
+
+    pylatexenc doesn't know our custom environments take an argument, so it
+    parks {label} as the first LatexGroupNode in the body rather than in
+    nodeargd.argnlist.  Check argnlist first, then fall back to nodelist[0].
+    """
     try:
         args = node.nodeargd.argnlist if node.nodeargd else []
-        return node_to_text(args[0]).strip() or None if args else None
+        if args:
+            return node_to_text(args[0]).strip() or None
     except (AttributeError, IndexError):
-        return None
+        pass
+    # Fall back: first child node is the {label} group placed in the body.
+    try:
+        from pylatexenc.latexwalker import LatexGroupNode
+
+        first = node.nodelist[0] if node.nodelist else None
+        if isinstance(first, LatexGroupNode):
+            text = node_to_text(first).strip()
+            return text or None
+    except (AttributeError, IndexError):
+        pass
+    return None

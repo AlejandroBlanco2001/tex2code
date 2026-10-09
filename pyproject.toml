@@ -48,6 +48,7 @@ testpaths = ["tests"]
 addopts   = "-v --tb=short"
 markers   = [
     "integration: acceptance tests against real paper sources (slower)",
+    "eval: LLM-judged evals — cost money, excluded from make test",
 ]
 
 [dependency-groups]

@@ -110,6 +110,17 @@ class TestWriteResult:
         assert manifest.entries["impl:loss"].hash == "abc123"
         assert manifest.entries["impl:loss"].role == Role.spec
 
+    def test_rerun_overwrites_existing_file(self, tmp_path, monkeypatch):
+        """Re-processing the same unit overwrites its files in place, no _2 suffix."""
+        monkeypatch.chdir(tmp_path)
+        manifest = Manifest()
+        write_result(_unit("impl:loss"), _result(code="v1 = 1"), manifest)
+        write_result(_unit("impl:loss"), _result(code="v2 = 2"), manifest)
+        src_files = list((tmp_path / ".tex2code/generated/src").iterdir())
+        assert len(src_files) == 1
+        assert src_files[0].name == "loss.py"
+        assert "v2 = 2" in src_files[0].read_text()
+
     def test_open_questions_written(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result = UnitResult(

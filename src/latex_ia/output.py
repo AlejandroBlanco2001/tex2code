@@ -84,13 +84,22 @@ def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Pat
         src_dir.mkdir(parents=True, exist_ok=True)
         test_dir.mkdir(parents=True, exist_ok=True)
 
-        stem = _unique_stem(_stem(unit), src_dir)
-        src_file = src_dir / f"{stem}.py"
+        # Reuse existing paths from the manifest so re-runs overwrite in place.
+        existing = manifest.entries.get(unit.id)
+        if existing and existing.code:
+            src_file = Path(existing.code[0])
+        else:
+            stem = _unique_stem(_stem(unit), src_dir)
+            src_file = src_dir / f"{stem}.py"
         src_file.write_text(result.code_stub, encoding="utf-8")
         written.append(src_file)
 
+        stem = src_file.stem
         if result.test_stub:
-            test_file = test_dir / f"test_{stem}.py"
+            if existing and existing.tests:
+                test_file = Path(existing.tests[0])
+            else:
+                test_file = test_dir / f"test_{stem}.py"
             test_file.write_text(result.test_stub, encoding="utf-8")
             written.append(test_file)
 

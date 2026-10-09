@@ -13,16 +13,24 @@ install-all:  ## Install with all optional deps (deberta, laya)
 # ── test ─────────────────────────────────────────────────────────────────────
 
 .PHONY: test
-test:  ## Run unit tests (fast, no integration)
-	uv run pytest -m "not integration"
+test:  ## Run unit tests (fast, no integration, no LLM cost)
+	uv run pytest -m "not integration and not eval"
 
 .PHONY: test-all
 test-all:  ## Run all tests including integration tests against real papers
-	uv run pytest
+	uv run pytest -m "not eval"
 
 .PHONY: test-integration
 test-integration:  ## Run only integration tests
 	uv run pytest -m integration
+
+.PHONY: eval
+eval:  ## Run all evals including LLM-judged (costs money)
+	uv run pytest tests/evals/
+
+.PHONY: eval-classifier
+eval-classifier:  ## Run classifier accuracy evals only (no LLM cost)
+	uv run pytest tests/evals/test_classifier.py -v
 
 .PHONY: cov
 cov:  ## Run tests with coverage report
