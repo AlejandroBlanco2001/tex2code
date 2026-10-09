@@ -1,0 +1,106 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+% In a real paper this would load tex2code.sty
+% Here we define no-op versions so the file compiles standalone
+\newenvironment{tcprocess}[1]{}{}
+\newenvironment{implement}[1]{}{}
+\newcommand{\tcsymbol}[3]{}
+\newcommand{\tcask}[1]{}
+\newcommand{\tcskip}[1]{#1}
+
+\title{A Sample Paper: Graph Neural Networks for Rainfall Prediction}
+\author{Isaac Blanco}
+\date{2026}
+
+\begin{document}
+\maketitle
+
+% ── Introduction (context) ─────────────────────────────────────────────────
+\section{Introduction}
+
+Previous work on rainfall prediction has relied on numerical weather models.
+In contrast, we propose a graph neural network approach that operates directly
+on station data. Related work includes \cite{smith2022} and \cite{jones2021}.
+
+% ── Notation (definition) ──────────────────────────────────────────────────
+\section{Notation}
+
+\begin{tcprocess}{def:graph}
+  We denote the sensor network as a graph $G = (V, E)$ where $V$ is the set
+  of weather stations and $E$ encodes spatial proximity.
+  \tcsymbol{G}{graph}{Graph, nodes=|V|}
+\end{tcprocess}
+
+% ── Method (spec) ──────────────────────────────────────────────────────────
+\section{Method}
+
+\subsection{Model}
+
+\begin{implement}{model:gnn}
+  Our model computes node embeddings $\mathbf{h}^{(l)}$ via:
+  \begin{equation}\label{eq:gnn}
+    \mathbf{h}^{(l+1)}_v = \sigma\!\left(
+      W^{(l)} \sum_{u \in \mathcal{N}(v)} \frac{\mathbf{h}^{(l)}_u}{|\mathcal{N}(v)|}
+    \right)
+  \end{equation}
+  where $\sigma$ is ReLU and $W^{(l)}$ are learned weights.
+\end{implement}
+
+\subsection{Loss}
+
+\begin{implement}{impl:loss}
+  \tcask{Should $\lambda$ be tuned or fixed at 1e-4?}
+  \begin{equation}\label{eq:loss}
+    \mathcal{L}(\theta) = \frac{1}{N}\sum_{i=1}^{N}
+      \bigl(\hat{y}_i - y_i\bigr)^2 + \lambda \|\theta\|^2
+  \end{equation}
+\end{implement}
+
+\subsection{Training procedure}
+
+\begin{tcprocess}{spec:training}
+  We train the model for 100 epochs using Adam with learning rate $\eta = 10^{-3}$.
+  We set the batch size to 32 and use early stopping on the validation loss.
+  \tcsymbol{\eta}{lr}{float}
+\end{tcprocess}
+
+% ── Assumptions ────────────────────────────────────────────────────────────
+\section{Assumptions}
+
+\begin{tcprocess}{assump:gaussian}
+  We assume the prediction residuals $\epsilon_i = \hat{y}_i - y_i$ are
+  approximately Gaussian.
+\end{tcprocess}
+
+% ── Results (result, unmarked — should be gated out) ───────────────────────
+\section{Results}
+
+Table~\ref{tab:results} shows that our model outperforms the baseline by 12\%.
+We observe consistent improvements across all seasons.
+
+\begin{table}[h]
+  \centering
+  \caption{RMSE comparison.}\label{tab:results}
+  \begin{tabular}{lcc}
+    \hline
+    Model     & Val RMSE & Test RMSE \\
+    \hline
+    Baseline  & 4.2      & 4.5       \\
+    Ours      & 3.7      & 3.9       \\
+    \hline
+  \end{tabular}
+\end{table}
+
+% ── Conclusion (context, unmarked) ─────────────────────────────────────────
+\section{Conclusion}
+
+We have presented a graph neural network approach for rainfall prediction.
+Future work includes extending the model to precipitation forecasting.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}
