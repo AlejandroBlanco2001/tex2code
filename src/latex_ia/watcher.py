@@ -19,6 +19,7 @@ from latex_ia.manifest import load as load_manifest, save as save_manifest
 from latex_ia.models import Manifest, Profile, Role
 from latex_ia.output import write_result
 from latex_ia.parser import parse
+from latex_ia.revisor import resolve_questions
 from latex_ia.worker import process_unit
 
 console = Console()
@@ -99,6 +100,20 @@ async def _process_units(
                 glossary=glossary,
                 _completion=_completion,
             )
+
+            # Revisor pass — filter out questions answerable from the paper.
+            if result.open_questions:
+                revision = await resolve_questions(
+                    unit,
+                    result.open_questions,
+                    units,
+                    profile,
+                    _completion=_completion,
+                )
+                if revision.resolved:
+                    result = result.model_copy(
+                        update={"open_questions": revision.unresolved}
+                    )
 
             # Update glossary immediately so subsequent units can use this definition.
             glossary.update(unit, result.role)
