@@ -90,7 +90,7 @@ async def _process_units(
     # Process in dependency order — sequential, not concurrent, so each unit
     # can benefit from the glossary entries added by its predecessors.
     for unit in changed:
-        console.print(f"  [dim]→[/dim] {unit.id}", end=" ", flush=True)
+        console.print(f"  [dim]→[/dim] {unit.id}", end=" ")
         try:
             result = await process_unit(
                 unit,
