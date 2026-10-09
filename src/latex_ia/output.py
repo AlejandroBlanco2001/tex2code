@@ -9,12 +9,36 @@ from latex_ia.models import Manifest, ManifestEntry, Role, Unit, UnitResult
 _GENERATED = Path(".tex2code/generated")
 _QUESTIONS = Path(".tex2code/questions.md")
 
+_RE_HEX = re.compile(r"^[0-9a-f]+$")
+_RE_SECTION_NUM = re.compile(r"^[\d.\s]+")
+_RE_NONALPHA = re.compile(r"[^a-zA-Z\s]")
+_SECTION_STOP = frozenset({"and", "the", "of", "in", "for", "a", "an", "with", "on"})
 
-def _stem(unit_id: str) -> str:
-    """Derive a safe Python module name from a unit id."""
-    # "impl:loss" → "loss",  "algorithm" → "algorithm",  "eq:abc123" → "eq_abc123"
-    name = unit_id.split(":")[-1] if ":" in unit_id else unit_id
-    name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+
+def _is_hash(name: str) -> bool:
+    return len(name) >= 8 and bool(_RE_HEX.match(name))
+
+
+def _name_from_section(section_path: list[str], unit_type: str) -> str:
+    """Derive a snake_case name from the most specific section heading."""
+    if not section_path:
+        return unit_type
+    section = _RE_SECTION_NUM.sub("", section_path[-1]).strip()
+    section = _RE_NONALPHA.sub(" ", section)
+    words = [w.lower() for w in section.split() if w.lower() not in _SECTION_STOP][:4]
+    return "_".join(words) if words else unit_type
+
+
+def _stem(unit: Unit) -> str:
+    """Derive a readable Python module name from a unit."""
+    uid = unit.id
+    suffix = uid.split(":")[-1] if ":" in uid else uid
+    unit_type = uid.split(":")[0] if ":" in uid else "unit"
+
+    if _is_hash(suffix):
+        return _name_from_section(unit.section_path, unit_type)
+
+    name = re.sub(r"[^a-zA-Z0-9_]", "_", suffix)
     return name.strip("_") or "unit"
 
 
@@ -26,7 +50,7 @@ def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Pat
     written: list[Path] = []
 
     if result.role == Role.spec and result.code_stub:
-        stem = _stem(unit.id)
+        stem = _stem(unit)
         src_dir = _GENERATED / "src"
         test_dir = _GENERATED / "tests"
         src_dir.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,6 @@
 """
 Worker tests use an injectable async _completion to avoid real LLM calls.
+process_unit now makes two calls for spec units (classify+test, then code).
 """
 
 from __future__ import annotations
@@ -15,78 +16,99 @@ from latex_ia.models import Profile, Role, Unit
 from latex_ia.worker import _extract_json, process_unit
 
 
-def _make_response(role: str = "spec", confidence: float = 0.9, **extra):
-    """Build a minimal LLM response object for injection."""
+def _resp_test(role: str = "spec", test_stub: str = "def test_f(): pass", **extra):
+    """Mock response for pass 1 (classify + test generation)."""
     payload = {
         "role": role,
-        "confidence": confidence,
+        "confidence": 0.9,
         "reasoning": "test reasoning",
-        "code_stub": "def f(): pass  # spec: test",
-        "test_stub": "def test_f(): assert f() is None",
+        "test_stub": test_stub,
         "open_questions": [],
         **extra,
     }
     msg = SimpleNamespace(content=json.dumps(payload))
-    choice = SimpleNamespace(message=msg)
-    return SimpleNamespace(choices=[choice])
+    return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+
+def _resp_code(code: str = "def f(): pass  # spec: test"):
+    """Mock response for pass 2 (code implementation)."""
+    payload = {"code_stub": code}
+    msg = SimpleNamespace(content=json.dumps(payload))
+    return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
 
 
 def _unit(id_: str = "algorithm") -> Unit:
-    """Return a minimal Unit for testing."""
     return Unit(id=id_, hash="abc", raw="\\begin{algorithm}\\end{algorithm}")
 
 
 def _profile() -> Profile:
-    """Return a minimal Profile for testing."""
     return Profile(field="machine-learning", model="gpt-4o-mini")
 
 
 class TestExtractJson:
     def test_plain_json(self):
-        """Parse a plain JSON string."""
         data = _extract_json('{"role": "spec", "confidence": 0.9}')
         assert data["role"] == "spec"
 
     def test_strips_markdown_fences(self):
-        """Strip ```json ... ``` fences before parsing."""
-        raw = '```json\n{"role": "spec"}\n```'
-        data = _extract_json(raw)
+        data = _extract_json('```json\n{"role": "spec"}\n```')
         assert data["role"] == "spec"
 
     def test_raises_on_no_json(self):
-        """Raise ValueError when no JSON object is present."""
         with pytest.raises(ValueError):
             _extract_json("no json here")
 
 
 class TestProcessUnit:
-    def test_returns_unit_result(self):
-        """Happy path: mock completion returns spec role."""
-        completion = AsyncMock(return_value=_make_response("spec"))
-        unit = _unit()
-        result = asyncio.run(process_unit(unit, [unit], _profile(), _completion=completion))
+    def test_spec_makes_two_calls(self):
+        """A spec unit triggers classify+test (pass 1) then implement (pass 2)."""
+        completion = AsyncMock(side_effect=[_resp_test("spec"), _resp_code()])
+        result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
         assert result.role == Role.spec
-        assert result.confidence == pytest.approx(0.9)
-        assert completion.called
+        assert completion.call_count == 2
 
-    def test_passes_model_to_completion(self):
-        """The profile model string is forwarded to the completion call."""
-        completion = AsyncMock(return_value=_make_response())
+    def test_non_spec_makes_one_call(self):
+        """A non-spec unit only needs pass 1 — no code generation."""
+        completion = AsyncMock(return_value=_resp_test("definition", test_stub=""))
+        result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
+        assert result.role == Role.definition
+        assert completion.call_count == 1
+
+    def test_spec_with_empty_test_stub_skips_pass2(self):
+        """If pass 1 produces no tests, pass 2 is skipped (nothing to implement against)."""
+        completion = AsyncMock(return_value=_resp_test("spec", test_stub=""))
+        result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
+        assert result.role == Role.spec
+        assert completion.call_count == 1
+
+    def test_code_stub_comes_from_pass2(self):
+        """The code_stub in the result is produced by the second pass."""
+        code = "def scaled_dot_product_attention(Q, K, V, d_k): ..."
+        completion = AsyncMock(side_effect=[_resp_test("spec"), _resp_code(code)])
+        result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
+        assert result.code_stub == code
+
+    def test_passes_model_to_both_calls(self):
+        """The profile model is forwarded to both completion calls."""
+        completion = AsyncMock(side_effect=[_resp_test("spec"), _resp_code()])
         asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
-        call_kwargs = completion.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-4o-mini"
+        for call in completion.call_args_list:
+            assert call.kwargs["model"] == "gpt-4o-mini"
 
     def test_bad_role_falls_back_to_unknown(self):
         """An unrecognised role string defaults to unknown with zero confidence."""
-        completion = AsyncMock(return_value=_make_response(role="not_a_role"))
+        completion = AsyncMock(return_value=_resp_test(role="not_a_role", test_stub=""))
         result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
         assert result.role == Role.unknown
         assert result.confidence == 0.0
 
     def test_open_questions_propagated(self):
-        """open_questions from the LLM response are preserved in UnitResult."""
+        """open_questions from pass 1 are preserved in the final UnitResult."""
         completion = AsyncMock(
-            return_value=_make_response(open_questions=["What is lambda?"])
+            side_effect=[
+                _resp_test("spec", open_questions=["What is lambda?"]),
+                _resp_code(),
+            ]
         )
         result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
         assert "What is lambda?" in result.open_questions
