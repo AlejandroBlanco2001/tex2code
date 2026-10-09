@@ -1,10 +1,5 @@
-import os
-from pathlib import Path
-
-import pytest
-
-from latex_ia.models import Manifest, ManifestEntry, Role, Unit, UnitResult
-from latex_ia.output import _stem, _name_from_label, write_result
+from latex_ia.models import Manifest, Role, Unit, UnitResult
+from latex_ia.output import _name_from_label, _stem, write_result
 
 
 def _unit(id_: str, section_path: list[str] | None = None) -> Unit:
@@ -99,7 +94,9 @@ class TestWriteResult:
 
     def test_non_spec_writes_nothing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        written = write_result(_unit("intro:1"), _result(Role.context, code="", test=""), Manifest())
+        written = write_result(
+            _unit("intro:1"), _result(Role.context, code="", test=""), Manifest()
+        )
         assert written == []
 
     def test_manifest_updated(self, tmp_path, monkeypatch):
@@ -124,10 +121,38 @@ class TestWriteResult:
     def test_open_questions_written(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result = UnitResult(
-            role=Role.spec, confidence=0.8, reasoning="r",
+            role=Role.spec,
+            confidence=0.8,
+            reasoning="r",
             code_stub="def f(): pass",
             open_questions=["What is lambda?"],
         )
         write_result(_unit("impl:loss"), result, Manifest())
         questions = (tmp_path / ".tex2code/questions.md").read_text()
         assert "What is lambda?" in questions
+
+    def test_resolved_questions_removed_on_rerun(self, tmp_path, monkeypatch):
+        """Re-processing a unit with no questions removes its section from questions.md."""
+        monkeypatch.chdir(tmp_path)
+        manifest = Manifest()
+        result_with = UnitResult(
+            role=Role.spec,
+            confidence=0.8,
+            reasoning="r",
+            code_stub="def f(): pass",
+            open_questions=["What is lambda?"],
+        )
+        write_result(_unit("impl:loss"), result_with, manifest)
+        assert "What is lambda?" in (tmp_path / ".tex2code/questions.md").read_text()
+
+        result_without = UnitResult(
+            role=Role.spec,
+            confidence=0.8,
+            reasoning="r",
+            code_stub="def f(): pass",
+            open_questions=[],
+        )
+        write_result(_unit("impl:loss"), result_without, manifest)
+        questions = (tmp_path / ".tex2code/questions.md").read_text()
+        assert "What is lambda?" not in questions
+        assert "impl:loss" not in questions

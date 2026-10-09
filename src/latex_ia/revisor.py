@@ -16,12 +16,42 @@ _MAX_CANDIDATES = 6
 _MAX_PROSE_CHUNKS = 4
 _MIN_PARA_CHARS = 60  # skip very short paragraphs (headings, blank lines)
 
-_STOP_WORDS = frozenset({
-    "what", "the", "are", "for", "and", "that", "this", "from", "how",
-    "which", "specific", "exact", "form", "forms", "function", "distribution",
-    "should", "used", "does", "have", "can", "its", "with", "into", "where",
-    "when", "their", "there", "define", "defined", "use", "any",
-})
+_STOP_WORDS = frozenset(
+    {
+        "what",
+        "the",
+        "are",
+        "for",
+        "and",
+        "that",
+        "this",
+        "from",
+        "how",
+        "which",
+        "specific",
+        "exact",
+        "form",
+        "forms",
+        "function",
+        "distribution",
+        "should",
+        "used",
+        "does",
+        "have",
+        "can",
+        "its",
+        "with",
+        "into",
+        "where",
+        "when",
+        "their",
+        "there",
+        "define",
+        "defined",
+        "use",
+        "any",
+    }
+)
 
 _RE_WORD = re.compile(r"\b\w{3,}\b")
 _RE_LATEX_CMD = re.compile(r"\\[a-zA-Z]+")
@@ -365,10 +395,13 @@ async def resolve_questions(
 
     # Build initial prompt with pre-loaded passages per question.
     parts: list[str] = []
-    for q, variants in zip(questions, variants_per_q):
+    for q, variants in zip(questions, variants_per_q, strict=False):
         q_symbols = _extract_symbols(q)
         candidates = _gather_candidates(
-            q, variants, all_units, unit.id,
+            q,
+            variants,
+            all_units,
+            unit.id,
             symbols=q_symbols,
             neighbor_ids=neighbor_ids,
         )
@@ -402,21 +435,23 @@ async def resolve_questions(
             raw = msg.content or ""
             break
 
-        messages.append({
-            "role": "assistant",
-            "content": msg.content,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        )
 
         for tc in tool_calls:
             args = json.loads(tc.function.arguments)
@@ -430,10 +465,12 @@ async def resolve_questions(
                 content = f"Unknown tool: {tc.function.name}"
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
     else:
-        messages.append({
-            "role": "user",
-            "content": "Provide your final verdict as the JSON object described above.",
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": "Provide your final verdict as the JSON object described above.",
+            }
+        )
         response = await completion(
             model=profile.model,
             messages=messages,
@@ -450,11 +487,11 @@ async def resolve_questions(
 
     resolved: list[str] = []
     unresolved: list[str] = []
-    for q, entry in zip(questions, results):
+    for q, entry in zip(questions, results, strict=False):
         if isinstance(entry, dict) and entry.get("answered"):
             resolved.append(q)
         else:
             unresolved.append(q)
-    unresolved.extend(questions[len(results):])
+    unresolved.extend(questions[len(results) :])
 
     return RevisionResult(resolved=resolved, unresolved=unresolved)

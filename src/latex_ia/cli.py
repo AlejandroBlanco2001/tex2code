@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import webbrowser
 from pathlib import Path
 
 import typer
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 
@@ -14,7 +17,8 @@ from latex_ia.classifier.rules import RuleClassifier
 from latex_ia.manifest import load as load_manifest
 from latex_ia.models import ClassificationResult, ProcessMode, Role
 from latex_ia.parser import parse_document
-from latex_ia.profile import load as load_profile, save as save_profile
+from latex_ia.profile import load as load_profile
+from latex_ia.profile import save as save_profile
 from latex_ia.watcher import watch as run_watch
 
 app = typer.Typer(help="Turn the executable parts of a LaTeX paper into a code project.")
@@ -61,8 +65,7 @@ def inspect(
 
     if mode == ProcessMode.auto:
         console.print(
-            "[yellow]note:[/yellow] LLM tier requires 'tex2code watch'. "
-            "Falling back to scan.\n"
+            "[yellow]note:[/yellow] LLM tier requires 'tex2code watch'. Falling back to scan.\n"
         )
         mode = ProcessMode.scan
 
@@ -103,20 +106,55 @@ def init(
     """Run domain calibration and create .tex2code/profile.json."""
     profile = calibrate(file, interactive=True)
     save_profile(profile)
-    console.print(f"\n[green]✓[/green] Profile saved to [cyan].tex2code/profile.json[/cyan]")
+    console.print("\n[green]✓[/green] Profile saved to [cyan].tex2code/profile.json[/cyan]")
     console.print(f"  field: {profile.field}, model: {profile.model}")
+
+
+async def _run_with_ui(tex_path: Path, profile, port: int) -> None:
+    loop = asyncio.get_running_loop()
+
+    from latex_ia.ui.events import EventBus
+    from latex_ia.ui.server import create_app as _create_app
+
+    bus = EventBus()
+    bus.set_loop(loop)
+
+    server_app = _create_app(bus, tex_path, profile)
+    config = uvicorn.Config(server_app, host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+
+    async def _open_browser() -> None:
+        await asyncio.sleep(0.8)
+        webbrowser.open(f"http://127.0.0.1:{port}")
+        console.print(
+            f"\n[bold green]✓[/bold green] UI open at "
+            f"[cyan]http://127.0.0.1:{port}[/cyan]  "
+            f"[dim](--no-ui to disable)[/dim]"
+        )
+
+    def _run_watcher() -> None:
+        run_watch(tex_path, profile, on_result=bus.on_unit_processed)
+
+    await asyncio.gather(
+        server.serve(),
+        asyncio.to_thread(_run_watcher),
+        _open_browser(),
+    )
 
 
 @app.command()
 def watch(
     file: Path = typer.Argument(..., help="Path to the main .tex file.", exists=True),  # noqa: B008
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip calibration if profile exists."),  # noqa: B008
+    ui: bool = typer.Option(True, "--ui/--no-ui", help="Open browser UI (default: on)."),  # noqa: B008
+    port: int = typer.Option(7842, "--port", help="Port for the browser UI."),  # noqa: B008
 ) -> None:
     """
     Watch a .tex file and process changed units in the background.
 
     On first run (no profile.json) the calibration Q&A runs automatically.
     Use 'tex2code init <file>' to re-run calibration at any time.
+    Pass --no-ui for terminal-only output.
     """
     profile_path = Path(".tex2code/profile.json")
     if profile_path.exists() and yes:
@@ -135,4 +173,7 @@ def watch(
         profile = calibrate(file, interactive=True)
         save_profile(profile, profile_path)
 
-    run_watch(file, profile)
+    if ui:
+        asyncio.run(_run_with_ui(file, profile, port))
+    else:
+        run_watch(file, profile)

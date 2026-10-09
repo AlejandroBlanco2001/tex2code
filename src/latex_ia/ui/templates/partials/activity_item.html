@@ -1,0 +1,9 @@
+<div class="activity-item activity-item--{{ entry.role }}" onclick="openSource('{{ entry.unit_id | e }}')">
+  <div class="activity-item__id">{{ entry.unit_id }}</div>
+  <div class="activity-item__meta">
+    <span class="role-badge role-badge--{{ entry.role }}">{{ entry.role }}</span>
+    <span class="conf">{{ "%.0f"|format(entry.confidence * 100) }}%</span>
+    {% if entry.files %}<span class="meta-pill">{{ entry.files }} file(s)</span>{% endif %}
+    {% if entry.questions_remaining %}<span class="meta-pill meta-pill--warn">{{ entry.questions_remaining }} question(s)</span>{% endif %}
+  </div>
+</div>

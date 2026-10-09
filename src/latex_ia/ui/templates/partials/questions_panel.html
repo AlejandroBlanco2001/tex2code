@@ -1,0 +1,27 @@
+{% if not question_groups %}
+<div class="empty-state">No open questions — all resolved.</div>
+{% else %}
+{% for unit_id, questions in question_groups.items() %}
+<div class="question-group" id="qg-{{ unit_id | replace(':', '-') | replace('/', '-') }}">
+  <div class="question-group__unit" onclick="openSource('{{ unit_id | e }}')">{{ unit_id }}</div>
+  {% for q in questions %}
+  <div class="question-item">
+    <div class="question-item__text">{{ q }}</div>
+    <div class="question-item__actions">
+      <form hx-post="/questions/answer" hx-target="#questions-list" hx-swap="innerHTML">
+        <input type="hidden" name="unit_id" value="{{ unit_id }}">
+        <input type="hidden" name="question" value="{{ q }}">
+        <input type="text" name="answer" placeholder="Add context for next run…" class="question-input" required>
+        <button type="submit" class="btn btn--answer">Save</button>
+      </form>
+      <form hx-post="/questions/dismiss" hx-target="#questions-list" hx-swap="innerHTML">
+        <input type="hidden" name="unit_id" value="{{ unit_id }}">
+        <input type="hidden" name="question" value="{{ q }}">
+        <button type="submit" class="btn btn--dismiss">Dismiss</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}

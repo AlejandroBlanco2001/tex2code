@@ -103,8 +103,7 @@ def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Pat
             test_file.write_text(result.test_stub, encoding="utf-8")
             written.append(test_file)
 
-    if result.open_questions:
-        _append_questions(unit.id, result.open_questions)
+    _upsert_questions(unit.id, result.open_questions)
 
     # Update manifest
     manifest.entries[unit.id] = ManifestEntry(
@@ -118,9 +117,22 @@ def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Pat
     return written
 
 
-def _append_questions(unit_id: str, questions: list[str]) -> None:
+def _upsert_questions(unit_id: str, questions: list[str]) -> None:
+    """Replace (or remove) the questions section for *unit_id* in questions.md."""
     _QUESTIONS.parent.mkdir(parents=True, exist_ok=True)
-    with _QUESTIONS.open("a", encoding="utf-8") as f:
-        f.write(f"\n## {unit_id}\n")
-        for q in questions:
-            f.write(f"- {q}\n")
+
+    existing = _QUESTIONS.read_text(encoding="utf-8") if _QUESTIONS.exists() else ""
+
+    # Strip any existing section for this unit_id.
+    pattern = re.compile(
+        r"\n?^## " + re.escape(unit_id) + r"\n(?:- .+\n?)*",
+        re.MULTILINE,
+    )
+    cleaned = pattern.sub("", existing)
+
+    if questions:
+        section = f"\n## {unit_id}\n" + "".join(f"- {q}\n" for q in questions)
+        cleaned = cleaned.rstrip("\n") + section
+
+    if cleaned or existing:
+        _QUESTIONS.write_text(cleaned, encoding="utf-8")

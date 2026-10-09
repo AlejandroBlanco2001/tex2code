@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>tex2code — {{ filename }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__brand">tex2code</div>
+    <div class="app-header__meta">
+      <span class="app-header__file">{{ filename }}</span>
+      <span class="app-header__sep">·</span>
+      <span class="app-header__model">{{ model }}</span>
+    </div>
+    <div class="app-header__status">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-label" id="status-label">connecting…</span>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="panel panel--activity">
+      <div class="panel__header">Activity</div>
+      <div class="panel__body">
+        <div id="activity-list"></div>
+        <div id="activity-empty" class="empty-state">Waiting for .tex saves…</div>
+      </div>
+    </section>
+
+    <section class="panel panel--questions">
+      <div class="panel__header">
+        Open Questions
+        <span class="question-count" id="question-count"></span>
+      </div>
+      <div class="panel__body">
+        <div id="questions-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="overlay" id="overlay" onclick="closeSource()"></div>
+  <aside class="source-drawer" id="source-drawer">
+    <button class="source-drawer__close" onclick="closeSource()" aria-label="Close">✕</button>
+    <div class="source-drawer__body" id="source-content"></div>
+  </aside>
+
+  <script>
+    const evtSource = new EventSource('/events');
+    const activityList = document.getElementById('activity-list');
+    const activityEmpty = document.getElementById('activity-empty');
+    const questionsList = document.getElementById('questions-list');
+    const questionCount = document.getElementById('question-count');
+    const statusDot = document.getElementById('status-dot');
+    const statusLabel = document.getElementById('status-label');
+
+    function setConnected(ok) {
+      statusDot.className = 'status-dot ' + (ok ? 'status-dot--ok' : 'status-dot--err');
+      statusLabel.textContent = ok ? 'watching' : 'disconnected';
+    }
+
+    evtSource.addEventListener('activity', (e) => {
+      activityEmpty.style.display = 'none';
+      activityList.insertAdjacentHTML('afterbegin', e.data);
+    });
+
+    evtSource.addEventListener('questions', (e) => {
+      questionsList.innerHTML = e.data;
+      const groups = questionsList.querySelectorAll('.question-group').length;
+      questionCount.textContent = groups > 0 ? groups : '';
+    });
+
+    evtSource.onopen = () => setConnected(true);
+    evtSource.onerror = () => setConnected(false);
+
+    function openSource(unitId) {
+      fetch('/source/' + encodeURIComponent(unitId))
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('source-content').innerHTML = html;
+          document.getElementById('source-drawer').classList.add('open');
+          document.getElementById('overlay').classList.add('visible');
+        });
+    }
+
+    function closeSource() {
+      document.getElementById('source-drawer').classList.remove('open');
+      document.getElementById('overlay').classList.remove('visible');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeSource();
+    });
+  </script>
+</body>
+</html>
