@@ -49,7 +49,7 @@ in `profile.json`:
 completion(model="claude-sonnet-4-6", messages=[...])
 completion(model="gpt-4o", messages=[...])
 completion(model="moonshot/moonshot-v1-8k", messages=[...])  # Kimi
-completion(model="ollama/llama3", messages=[...])            # local
+completion(model="ollama/llama3", messages=[...])  # local
 ```
 
 Structured outputs use **Pydantic models** directly (not PydanticAI) — the
@@ -149,8 +149,7 @@ counts more) and let `\label` presence break ties.
 The Tier 3 slot accepts any backend implementing:
 
 ```python
-def classify(text: str, section_title: str) -> tuple[str, float]:
-    ...  # returns (role, confidence)
+def classify(text: str, section_title: str) -> tuple[str, float]: ...  # returns (role, confidence)
 ```
 
 Built-in levels (configured via `profile.json` or `--classifier` flag):
