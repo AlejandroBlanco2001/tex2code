@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -52,6 +53,8 @@ async def _process_units(
     manifest: Manifest,
     *,
     on_result: Callable | None = None,
+    on_pass_start: Callable[[int], None] | None = None,
+    on_pass_end: Callable[[], None] | None = None,
     _completion=None,
 ) -> None:
     """
@@ -72,8 +75,6 @@ async def _process_units(
     if not changed_ids:
         return
 
-    # Build dependency graph and sort all units; then filter to changed ones
-    # while preserving the topological order.
     hints = _role_hints(units, manifest)
     deps = build_dependency_map(units, role_hints=hints)
     ordered_all = topological_sort(units, deps)
@@ -81,59 +82,71 @@ async def _process_units(
 
     console.print(f"\n[bold cyan]↻[/bold cyan] {len(changed)} changed unit(s) (topological order)")
 
+    if on_pass_start:
+        on_pass_start(len(changed))
+
     glossary = Glossary()
 
-    # Seed glossary from already-processed definition units in the manifest.
     id_to_unit = {u.id: u for u in units}
     for unit_id, entry in manifest.entries.items():
         if entry.role in (Role.definition, Role.assumption) and unit_id in id_to_unit:
             glossary.update(id_to_unit[unit_id], entry.role)
 
-    # Process in dependency order — sequential, not concurrent, so each unit
-    # can benefit from the glossary entries added by its predecessors.
     for unit in changed:
-        console.print(f"  [dim]→[/dim] {unit.id}")
         try:
-            result = await process_unit(
-                unit,
-                units,
-                profile,
-                glossary=glossary,
-                _completion=_completion,
-            )
-
-            # Revisor pass — filter out questions answerable from the paper.
-            if result.open_questions:
-                console.print(
-                    f"    [dim]↳ revising {len(result.open_questions)} question(s)…[/dim]"
-                )
-                revision = await resolve_questions(
+            with console.status(f"  [cyan]→[/cyan] {unit.id}…", spinner="dots"):
+                result = await process_unit(
                     unit,
-                    result.open_questions,
                     units,
                     profile,
-                    deps=deps,
-                    doc_text=doc_text,
+                    glossary=glossary,
                     _completion=_completion,
                 )
-                if revision.resolved:
+
+                # Revisor pass — filter out questions answerable from the paper.
+                if result.open_questions:
                     console.print(
-                        f"    [dim]↳ resolved {len(revision.resolved)}, "
-                        f"{len(revision.unresolved)} remain[/dim]"
+                        f"    [dim]↳ revising {len(result.open_questions)} question(s)…[/dim]"
                     )
-                    result = result.model_copy(update={"open_questions": revision.unresolved})
+                    revision = await resolve_questions(
+                        unit,
+                        result.open_questions,
+                        units,
+                        profile,
+                        deps=deps,
+                        doc_text=doc_text,
+                        _completion=_completion,
+                    )
+                    if revision.resolved:
+                        console.print(
+                            f"    [dim]↳ resolved {len(revision.resolved)}, "
+                            f"{len(revision.unresolved)} remain[/dim]"
+                        )
+                        result = result.model_copy(update={"open_questions": revision.unresolved})
 
-            # Update glossary immediately so subsequent units can use this definition.
-            glossary.update(unit, result.role)
+                # Check answered notes for any questions already resolved by the researcher.
+                if result.open_questions:
+                    from latex_ia.notes import find_prior_answer, load_notes
 
-            written = write_result(unit, result, manifest)
-            save_manifest(manifest)
+                    notes = load_notes()
+                    still_open = []
+                    for q in result.open_questions:
+                        prior = find_prior_answer(q, notes)
+                        if prior:
+                            console.print(f"    [dim]↳ prior answer found for: {q[:60]}…[/dim]")
+                        else:
+                            still_open.append(q)
+                    result = result.model_copy(update={"open_questions": still_open})
+
+                glossary.update(unit, result.role)
+                written = write_result(unit, result, manifest)
+                save_manifest(manifest)
 
             role_color = {"spec": "green", "result": "yellow"}.get(str(result.role), "white")
             conf = f"{result.confidence:.0%}"
             files_note = f"  [dim]({len(written)} file(s))[/dim]" if written else ""
             console.print(
-                f"    [dim]role:[/dim] [{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
+                f"  [dim]✓[/dim] {unit.id}  [{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
             )
 
             if result.open_questions:
@@ -147,6 +160,9 @@ async def _process_units(
 
         except Exception as exc:
             console.print(f"[red]error:[/red] {exc}")
+
+    if on_pass_end:
+        on_pass_end()
 
 
 class _TexHandler(FileSystemEventHandler):
@@ -164,13 +180,16 @@ class _TexHandler(FileSystemEventHandler):
         manifest: Manifest,
         *,
         on_result: Callable | None = None,
+        on_pass_start: Callable[[int], None] | None = None,
+        on_pass_end: Callable[[], None] | None = None,
         _completion=None,
     ) -> None:
-        """Initialise the handler with the document path, profile, and manifest."""
         self._tex_path = tex_path
         self._profile = profile
         self._manifest = manifest
         self._on_result = on_result
+        self._on_pass_start = on_pass_start
+        self._on_pass_end = on_pass_end
         self._completion = _completion
         self._lock = threading.Lock()
         self._debounce_timer: threading.Timer | None = None
@@ -193,6 +212,8 @@ class _TexHandler(FileSystemEventHandler):
                 self._profile,
                 self._manifest,
                 on_result=self._on_result,
+                on_pass_start=self._on_pass_start,
+                on_pass_end=self._on_pass_end,
                 _completion=self._completion,
             )
         )
@@ -201,12 +222,19 @@ class _TexHandler(FileSystemEventHandler):
         """Run an immediate processing pass (used for the initial scan on startup)."""
         self._run_scheduled()
 
+    def force_rerun(self, unit_id: str) -> None:
+        """Clear manifest entry for *unit_id* and schedule an immediate re-pass."""
+        if unit_id in self._manifest.entries:
+            del self._manifest.entries[unit_id]
+        self._run_scheduled()
+
 
 def watch(
     tex_path: Path,
     profile: Profile,
     *,
     on_result: Callable | None = None,
+    bus: Any | None = None,
     _completion=None,
 ) -> None:
     """
@@ -214,16 +242,27 @@ def watch(
 
     Runs until Ctrl-C.  *on_result(unit, result)* is called after each
     successful unit — useful for tests and plugins.
+    *bus* is an optional EventBus; if provided, processing-start/end events
+    are emitted and re-run requests are wired up.
     *_completion* is the litellm.acompletion callable; injectable for tests.
     """
     manifest = load_manifest()
+
+    on_pass_start = bus.emit_processing_start if bus else None
+    on_pass_end = bus.emit_processing_end if bus else None
+
     handler = _TexHandler(
         tex_path,
         profile,
         manifest,
         on_result=on_result,
+        on_pass_start=on_pass_start,
+        on_pass_end=on_pass_end,
         _completion=_completion,
     )
+
+    if bus:
+        bus.register_rerun(handler.force_rerun)
 
     observer = Observer()
     observer.schedule(handler, str(tex_path.parent), recursive=True)

@@ -23,7 +23,10 @@
 
   <main class="app-main">
     <section class="panel panel--activity">
-      <div class="panel__header">Activity</div>
+      <div class="panel__header" id="activity-header">
+        Activity
+        <span class="processing-indicator" aria-label="Processing"></span>
+      </div>
       <div class="panel__body">
         <div id="activity-list"></div>
         <div id="activity-empty" class="empty-state">Waiting for .tex saves…</div>
@@ -70,6 +73,14 @@
       questionsList.innerHTML = e.data;
       const groups = questionsList.querySelectorAll('.question-group').length;
       questionCount.textContent = groups > 0 ? groups : '';
+    });
+
+    evtSource.addEventListener('processing_start', () => {
+      document.getElementById('activity-header').classList.add('processing');
+    });
+
+    evtSource.addEventListener('processing_end', () => {
+      document.getElementById('activity-header').classList.remove('processing');
     });
 
     evtSource.onopen = () => setConnected(true);

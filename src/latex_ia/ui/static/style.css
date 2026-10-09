@@ -398,3 +398,62 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* ── Processing indicator ────────────────────────────── */
+
+.processing-indicator {
+  display: none;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.panel__header.processing .processing-indicator {
+  display: inline-block;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+
+/* ── Question saved / dismissed states ───────────────── */
+
+.question-item--saved,
+.question-item--dismissed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  animation: fadeSlide 0.4s ease 2s forwards;
+  overflow: hidden;
+}
+
+.question-item--saved    { background: #f0fdf4; color: #16a34a; }
+.question-item--dismissed { background: #f8fafc; color: var(--text-muted); }
+.saved-icon { font-size: 1rem; }
+
+@keyframes fadeSlide {
+  from { opacity: 1; max-height: 120px; padding: 0.6rem 1rem; margin-bottom: 0.5rem; }
+  to   { opacity: 0; max-height: 0;     padding: 0;            margin: 0;            }
+}
+
+/* ── Re-run button ───────────────────────────────────── */
+
+.btn--rerun {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn--rerun:hover { background: #2563eb; }

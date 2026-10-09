@@ -8,13 +8,18 @@
   <div class="question-item">
     <div class="question-item__text">{{ q }}</div>
     <div class="question-item__actions">
-      <form hx-post="/questions/answer" hx-target="#questions-list" hx-swap="innerHTML">
+      <form hx-post="/questions/answer"
+            hx-target="closest .question-item"
+            hx-swap="outerHTML">
         <input type="hidden" name="unit_id" value="{{ unit_id }}">
         <input type="hidden" name="question" value="{{ q }}">
         <input type="text" name="answer" placeholder="Add context for next run…" class="question-input" required>
-        <button type="submit" class="btn btn--answer">Save</button>
+        <button type="submit" name="rerun" value="false" class="btn btn--answer">Save</button>
+        <button type="submit" name="rerun" value="true" class="btn btn--rerun">Save &amp; re-run</button>
       </form>
-      <form hx-post="/questions/dismiss" hx-target="#questions-list" hx-swap="innerHTML">
+      <form hx-post="/questions/dismiss"
+            hx-target="closest .question-item"
+            hx-swap="outerHTML">
         <input type="hidden" name="unit_id" value="{{ unit_id }}">
         <input type="hidden" name="question" value="{{ q }}">
         <button type="submit" class="btn btn--dismiss">Dismiss</button>

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import threading
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -24,6 +25,7 @@ class EventBus:
         self._subscribers: list[asyncio.Queue] = []
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._rerun_callback: Any = None
         self.activity_log: list[ActivityEntry] = []
         self.questions: dict[str, list[str]] = {}
         self.sources: dict[str, str] = {}
@@ -78,3 +80,16 @@ class EventBus:
                 if not self.questions[unit_id]:
                     del self.questions[unit_id]
         self._push("questions", "")
+
+    def emit_processing_start(self, count: int) -> None:
+        self._push("processing_start", str(count))
+
+    def emit_processing_end(self) -> None:
+        self._push("processing_end", "")
+
+    def register_rerun(self, callback: Any) -> None:
+        self._rerun_callback = callback
+
+    def request_rerun(self, unit_id: str) -> None:
+        if self._rerun_callback:
+            self._rerun_callback(unit_id)

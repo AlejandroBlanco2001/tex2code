@@ -78,7 +78,8 @@ class TestQuestionsRoutes:
         bus.on_unit_processed(unit, result)
         return client, bus
 
-    def test_answer_removes_question(self, tmp_path):
+    def test_answer_removes_question(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         client, bus = self._bus_with_question(tmp_path)
         resp = client.post(
             "/questions/answer",
@@ -88,10 +89,8 @@ class TestQuestionsRoutes:
         assert "What is X?" not in bus.questions.get("impl:enc", [])
         assert "What is Y?" in bus.questions.get("impl:enc", [])
 
-    def test_answer_writes_note(self, tmp_path):
-        import os
-
-        os.chdir(tmp_path)
+    def test_answer_writes_note(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         client, bus = self._bus_with_question(tmp_path)
         client.post(
             "/questions/answer",
@@ -101,7 +100,8 @@ class TestQuestionsRoutes:
         assert "What is X?" in notes
         assert "X = 5" in notes
 
-    def test_dismiss_removes_question(self, tmp_path):
+    def test_dismiss_removes_question(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         client, bus = self._bus_with_question(tmp_path)
         resp = client.post(
             "/questions/dismiss",
@@ -110,22 +110,34 @@ class TestQuestionsRoutes:
         assert resp.status_code == 200
         assert "What is X?" not in bus.questions.get("impl:enc", [])
 
-    def test_answer_response_is_html(self, tmp_path):
+    def test_answer_returns_saved_fragment(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         client, bus = self._bus_with_question(tmp_path)
         resp = client.post(
             "/questions/answer",
             data={"unit_id": "impl:enc", "question": "What is X?", "answer": "X = 5"},
         )
         assert "text/html" in resp.headers["content-type"]
+        assert "question-item--saved" in resp.text
 
-    def test_answer_all_questions_returns_empty_state(self, tmp_path):
+    def test_dismiss_returns_dismissed_fragment(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        client, bus = self._bus_with_question(tmp_path)
+        resp = client.post(
+            "/questions/dismiss",
+            data={"unit_id": "impl:enc", "question": "What is X?"},
+        )
+        assert "text/html" in resp.headers["content-type"]
+        assert "question-item--dismissed" in resp.text
+
+    def test_answer_writes_answered_json(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         client, bus = self._bus_with_question(tmp_path)
         client.post(
             "/questions/answer",
-            data={"unit_id": "impl:enc", "question": "What is X?", "answer": "a"},
+            data={"unit_id": "impl:enc", "question": "What is X?", "answer": "X = 5"},
         )
-        resp = client.post(
-            "/questions/answer",
-            data={"unit_id": "impl:enc", "question": "What is Y?", "answer": "b"},
-        )
-        assert "No open questions" in resp.text or "impl:enc" not in resp.text
+        import json
+
+        answered = json.loads((tmp_path / ".tex2code/answered.json").read_text())
+        assert any(e["question"] == "What is X?" and e["answer"] == "X = 5" for e in answered)

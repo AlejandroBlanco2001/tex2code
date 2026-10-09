@@ -133,7 +133,7 @@ async def _run_with_ui(tex_path: Path, profile, port: int) -> None:
         )
 
     def _run_watcher() -> None:
-        run_watch(tex_path, profile, on_result=bus.on_unit_processed)
+        run_watch(tex_path, profile, on_result=bus.on_unit_processed, bus=bus)
 
     await asyncio.gather(
         server.serve(),
