@@ -7,12 +7,15 @@ from rich.console import Console
 from rich.table import Table
 
 from latex_ia import __version__
+from latex_ia.calibration import calibrate
 from latex_ia.classifier.gate import gate
 from latex_ia.classifier.keyword import KeywordScorer
 from latex_ia.classifier.rules import RuleClassifier
 from latex_ia.manifest import load as load_manifest
 from latex_ia.models import ClassificationResult, ProcessMode, Role
 from latex_ia.parser.latex_parser import ParseResult, _parse_source, _resolve_source
+from latex_ia.profile import load as load_profile, save as save_profile
+from latex_ia.watcher import watch as run_watch
 
 app = typer.Typer(help="Turn the executable parts of a LaTeX paper into a code project.")
 console = Console()
@@ -59,7 +62,10 @@ def inspect(
         console.print()
 
     if mode == ProcessMode.auto:
-        console.print("[yellow]note:[/yellow] LLM tier not yet implemented — falling back to scan.\n")
+        console.print(
+            "[yellow]note:[/yellow] LLM tier requires 'tex2code watch'. "
+            "Falling back to scan.\n"
+        )
         mode = ProcessMode.scan
 
     manifest = load_manifest()
@@ -90,3 +96,45 @@ def inspect(
         table.add_row(unit.id, marked, role, conf, tier, status)
 
     console.print(table)
+
+
+@app.command()
+def init(
+    file: Path = typer.Argument(..., help="Path to the main .tex file.", exists=True),  # noqa: B008
+) -> None:
+    """Run domain calibration and create .tex2code/profile.json."""
+    profile = calibrate(file, interactive=True)
+    save_profile(profile)
+    console.print(f"\n[green]✓[/green] Profile saved to [cyan].tex2code/profile.json[/cyan]")
+    console.print(f"  field: {profile.field}, model: {profile.model}")
+
+
+@app.command()
+def watch(
+    file: Path = typer.Argument(..., help="Path to the main .tex file.", exists=True),  # noqa: B008
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip calibration if profile exists."),  # noqa: B008
+) -> None:
+    """
+    Watch a .tex file and process changed units in the background.
+
+    On first run (no profile.json) the calibration Q&A runs automatically.
+    Use 'tex2code init <file>' to re-run calibration at any time.
+    """
+    profile_path = Path(".tex2code/profile.json")
+    if profile_path.exists() and yes:
+        profile = load_profile(profile_path)
+        console.print(f"[dim]Using existing profile ({profile.field}, {profile.model})[/dim]\n")
+    elif profile_path.exists():
+        reuse = typer.confirm(
+            f"Found .tex2code/profile.json ({load_profile(profile_path).field}). Use it?",
+            default=True,
+        )
+        profile = load_profile(profile_path) if reuse else calibrate(file)
+        if not reuse:
+            save_profile(profile, profile_path)
+    else:
+        console.print("[bold]No profile found — running calibration first.[/bold]\n")
+        profile = calibrate(file, interactive=True)
+        save_profile(profile, profile_path)
+
+    run_watch(file, profile)
