@@ -11,7 +11,7 @@ from latex_ia.classifier.gate import gate
 from latex_ia.classifier.keyword import KeywordScorer
 from latex_ia.classifier.rules import RuleClassifier
 from latex_ia.manifest import load as load_manifest
-from latex_ia.models import ClassificationResult, Role
+from latex_ia.models import ClassificationResult, ProcessMode, Role
 from latex_ia.parser.latex_parser import ParseResult, _parse_source, _resolve_source
 
 app = typer.Typer(help="Turn the executable parts of a LaTeX paper into a code project.")
@@ -35,9 +35,17 @@ def main() -> None:
     app()
 
 
+_MODE_HELP = (
+    "strict = opt-in markers only (default); "
+    "scan = rules+keyword on all units, no LLM; "
+    "auto = full pipeline including LLM (Milestone 2)"
+)
+
+
 @app.command()
 def inspect(
     file: Path = typer.Argument(..., help="Path to the .tex file.", exists=True),  # noqa: B008
+    mode: ProcessMode = typer.Option(ProcessMode.strict, "--mode", "-m", help=_MODE_HELP),  # noqa: B008
 ) -> None:
     """Print the document model for a .tex file."""
     parse_result = ParseResult()
@@ -50,11 +58,15 @@ def inspect(
             console.print(f"[yellow]warning:[/yellow] {w}")
         console.print()
 
+    if mode == ProcessMode.auto:
+        console.print("[yellow]note:[/yellow] LLM tier not yet implemented — falling back to scan.\n")
+        mode = ProcessMode.scan
+
     manifest = load_manifest()
     rule_clf = RuleClassifier()
     kw_clf = KeywordScorer()
 
-    table = Table(title=f"[bold]{file}[/bold]  —  {len(units)} units")
+    table = Table(title=f"[bold]{file}[/bold]  —  {len(units)} units  [dim](mode: {mode})[/dim]")
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Marked", justify="center")
     table.add_column("Role", style="magenta")
@@ -63,7 +75,7 @@ def inspect(
     table.add_column("Status")
 
     for unit in units:
-        result: ClassificationResult | None = gate(unit, manifest)
+        result: ClassificationResult | None = gate(unit, manifest, mode)
         if result is None:
             result = rule_clf.classify(unit)
         if result is None:

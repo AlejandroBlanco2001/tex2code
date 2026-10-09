@@ -6,6 +6,12 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 
+class ProcessMode(StrEnum):
+    strict = "strict"  # opt-in only — only marked units enter the pipeline
+    scan = "scan"  # rules + keyword on everything, no LLM cost
+    auto = "auto"  # full pipeline, ambiguous units reach the LLM (Milestone 2)
+
+
 class Role(StrEnum):
     context = "context"
     definition = "definition"
