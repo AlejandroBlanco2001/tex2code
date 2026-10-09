@@ -42,6 +42,33 @@ class ClassificationResult(BaseModel):
     skipped: bool = False  # True when tier -1 or 0 caused a skip
 
 
+class UnitResult(BaseModel):
+    """Output of one LLM worker call — classification + generated code."""
+
+    role: Role
+    confidence: Annotated[float, Field(ge=0.0, le=1.0)]
+    reasoning: str
+    code_stub: str = ""
+    test_stub: str = ""
+    open_questions: list[str] = Field(default_factory=list)
+
+
+class Profile(BaseModel):
+    """Per-project calibration profile stored in .tex2code/profile.json."""
+
+    field: str = "unknown"
+    subfield: str = ""
+    venue_type: str = "preprint"
+    education_level: str = "phd"
+    audience: str = "labmates"
+    code_reader_expertise: str = "reads-python"
+    proofs_are_spec: bool = False
+    spec_heuristics: list[str] = Field(default_factory=list)
+    tone: str = "technical-concise"
+    model: str = "claude-sonnet-4-6"
+    prior_work_context: str = ""
+
+
 class ManifestEntry(BaseModel):
     hash: str
     role: Role
