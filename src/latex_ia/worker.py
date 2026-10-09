@@ -1,7 +1,11 @@
+"""LLM worker — classify a unit and generate code in a single async call."""
+
 from __future__ import annotations
 
 import json
 import re
+
+import litellm
 
 from latex_ia.context import build_context
 from latex_ia.models import Profile, Role, Unit, UnitResult
@@ -31,34 +35,30 @@ Rules:
 - Every generated function must begin with a comment: # spec: <unit_id>
 """
 
+_RE_FENCE = re.compile(r"```(?:json)?\s*")
+
 
 def _user_prompt(unit: Unit, context: str, profile: Profile) -> str:
+    """Build the user-turn prompt from the unit, its context slice, and the profile."""
     section = " > ".join(unit.section_path) if unit.section_path else "unknown section"
     heuristics = ", ".join(profile.spec_heuristics) if profile.spec_heuristics else "none"
-    return f"""\
-Field: {profile.field} ({profile.subfield})
-Education level: {profile.education_level}
-Audience: {profile.audience}
-Tone: {profile.tone}
-Spec heuristics: {heuristics}
-
-Section: {section}
-Unit ID: {unit.id}
-Marked by author: {unit.marked}
-
---- document context ---
-{context}
---- end context ---
-
-Classify the TARGET unit and implement it if it is a spec.
-"""
+    return (
+        f"Field: {profile.field} ({profile.subfield})\n"
+        f"Education level: {profile.education_level}\n"
+        f"Audience: {profile.audience}\n"
+        f"Tone: {profile.tone}\n"
+        f"Spec heuristics: {heuristics}\n\n"
+        f"Section: {section}\n"
+        f"Unit ID: {unit.id}\n"
+        f"Marked by author: {unit.marked}\n\n"
+        f"--- document context ---\n{context}\n--- end context ---\n\n"
+        "Classify the TARGET unit and implement it if it is a spec."
+    )
 
 
 def _extract_json(text: str) -> dict:
     """Extract the first JSON object from the response, stripping markdown fences."""
-    # Strip ```json ... ``` fences if present
-    text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
-    # Find the first { ... } block
+    text = _RE_FENCE.sub("", text).strip().rstrip("`").strip()
     start = text.find("{")
     end = text.rfind("}") + 1
     if start == -1 or end == 0:
@@ -66,27 +66,24 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start:end])
 
 
-def process_unit(
+async def process_unit(
     unit: Unit,
     all_units: list[Unit],
     profile: Profile,
     *,
-    _completion=None,  # injectable for tests
+    _completion=None,
 ) -> UnitResult:
     """
-    Call the LLM to classify and (if spec) implement a single unit.
+    Classify *unit* and (if spec) generate code via a single async LLM call.
 
-    _completion is the litellm.completion callable; pass a mock in tests.
+    *_completion* defaults to litellm.acompletion and is injectable for tests.
     """
-    if _completion is None:
-        import litellm
-
-        _completion = litellm.completion
+    completion = _completion if _completion is not None else litellm.acompletion
 
     context = build_context(unit, all_units)
     prompt = _user_prompt(unit, context, profile)
 
-    response = _completion(
+    response = await completion(
         model=profile.model,
         messages=[
             {"role": "system", "content": _SYSTEM},
@@ -99,7 +96,6 @@ def process_unit(
     raw = response.choices[0].message.content
     data = _extract_json(raw)
 
-    # Ensure role is a valid Role value; default to unknown on bad data
     try:
         data["role"] = Role(data.get("role", "unknown"))
     except ValueError:
