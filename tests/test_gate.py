@@ -59,7 +59,9 @@ class TestScanMode:
     def test_hash_cache_still_applies_in_scan(self):
         manifest = Manifest(
             entries={
-                "impl:loss": ManifestEntry(hash="abc123", role=Role.spec, last_processed="2026-10-09")
+                "impl:loss": ManifestEntry(
+                    hash="abc123", role=Role.spec, last_processed="2026-10-09"
+                )
             }
         )
         result = gate(_unit(marked=False, hash_="abc123"), manifest, ProcessMode.scan)

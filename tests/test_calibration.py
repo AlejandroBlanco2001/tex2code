@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from latex_ia.calibration import infer_from_source
 from latex_ia.models import Profile
 

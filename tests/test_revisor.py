@@ -31,18 +31,14 @@ def _profile() -> Profile:
 def _rephrase_resp(n: int) -> MagicMock:
     """Mock rephrase response: n questions → n empty variant lists."""
     payload = json.dumps({"variants": [[] for _ in range(n)]})
-    return MagicMock(
-        choices=[MagicMock(message=MagicMock(content=payload, tool_calls=None))]
-    )
+    return MagicMock(choices=[MagicMock(message=MagicMock(content=payload, tool_calls=None))])
 
 
 def _verdict_resp(answered: list[bool]) -> MagicMock:
     """Mock agent final-verdict response with no tool calls."""
     results = [{"answered": a, "evidence": "found" if a else ""} for a in answered]
     payload = json.dumps({"results": results})
-    return MagicMock(
-        choices=[MagicMock(message=MagicMock(content=payload, tool_calls=None))]
-    )
+    return MagicMock(choices=[MagicMock(message=MagicMock(content=payload, tool_calls=None))])
 
 
 def _tool_call_resp(name: str, arguments: dict, call_id: str = "tc1") -> MagicMock:
@@ -51,9 +47,7 @@ def _tool_call_resp(name: str, arguments: dict, call_id: str = "tc1") -> MagicMo
     tc.id = call_id
     tc.function.name = name
     tc.function.arguments = json.dumps(arguments)
-    return MagicMock(
-        choices=[MagicMock(message=MagicMock(content=None, tool_calls=[tc]))]
-    )
+    return MagicMock(choices=[MagicMock(message=MagicMock(content=None, tool_calls=[tc]))])
 
 
 class TestExtractSymbols:
@@ -103,7 +97,10 @@ class TestGatherCandidates:
         sym_unit = _unit("def:enc", raw=r"\fPhi is the encoder")
         kw_unit = _unit("intro", raw="encoder function phi")
         results = _gather_candidates(
-            "What is fPhi?", [], [sym_unit, kw_unit], "algo",
+            "What is fPhi?",
+            [],
+            [sym_unit, kw_unit],
+            "algo",
             symbols={"fPhi", r"\fPhi"},
         )
         assert results[0].id == "def:enc"
@@ -113,7 +110,10 @@ class TestGatherCandidates:
         neighbour = _unit("def:prior", raw="completely unrelated content xyz")
         other = _unit("eq:loss", raw="fPhi encoder keyword match")
         results = _gather_candidates(
-            "What is fPhi?", [], [neighbour, other], "algo",
+            "What is fPhi?",
+            [],
+            [neighbour, other],
+            "algo",
             neighbor_ids={"def:prior"},
         )
         ids = [u.id for u in results]
@@ -238,11 +238,13 @@ class TestResolveQuestions:
 
     def test_tool_call_then_verdict(self):
         """Agent may issue a search tool call before the final verdict."""
-        mock = AsyncMock(side_effect=[
-            _rephrase_resp(1),
-            _tool_call_resp("search_document", {"query": "fPhi encoder"}),
-            _verdict_resp([True]),
-        ])
+        mock = AsyncMock(
+            side_effect=[
+                _rephrase_resp(1),
+                _tool_call_resp("search_document", {"query": "fPhi encoder"}),
+                _verdict_resp([True]),
+            ]
+        )
         result = asyncio.run(
             resolve_questions(
                 _unit("algo"),
@@ -257,11 +259,13 @@ class TestResolveQuestions:
 
     def test_get_unit_tool_call(self):
         """Agent may call get_unit to fetch a unit by ID."""
-        mock = AsyncMock(side_effect=[
-            _rephrase_resp(1),
-            _tool_call_resp("get_unit", {"unit_id": "def:enc"}),
-            _verdict_resp([True]),
-        ])
+        mock = AsyncMock(
+            side_effect=[
+                _rephrase_resp(1),
+                _tool_call_resp("get_unit", {"unit_id": "def:enc"}),
+                _verdict_resp([True]),
+            ]
+        )
         result = asyncio.run(
             resolve_questions(
                 _unit("algo"),
@@ -275,9 +279,7 @@ class TestResolveQuestions:
 
     def test_malformed_verdict_all_unresolved(self):
         """Invalid JSON from the agent treats all questions as unresolved."""
-        bad = MagicMock(
-            choices=[MagicMock(message=MagicMock(content="not json", tool_calls=None))]
-        )
+        bad = MagicMock(choices=[MagicMock(message=MagicMock(content="not json", tool_calls=None))])
         mock = AsyncMock(side_effect=[_rephrase_resp(1), bad])
         result = asyncio.run(
             resolve_questions(_unit("algo"), ["Q?"], [], _profile(), _completion=mock)
@@ -289,9 +291,7 @@ class TestResolveQuestions:
         """Extra questions beyond the LLM result list stay unresolved."""
         mock = AsyncMock(side_effect=[_rephrase_resp(3), _verdict_resp([True])])
         result = asyncio.run(
-            resolve_questions(
-                _unit("algo"), ["Q1", "Q2", "Q3"], [], _profile(), _completion=mock
-            )
+            resolve_questions(_unit("algo"), ["Q1", "Q2", "Q3"], [], _profile(), _completion=mock)
         )
         assert "Q1" in result.resolved
         assert "Q2" in result.unresolved
@@ -318,11 +318,13 @@ class TestResolveQuestions:
     def test_search_prose_tool_call(self):
         """Agent can call search_prose to search unstructured text."""
         doc = "The dimensionality of input and output is d_model=512, inner-layer d_ff=2048."
-        mock = AsyncMock(side_effect=[
-            _rephrase_resp(1),
-            _tool_call_resp("search_prose", {"query": "dimensionality input output"}),
-            _verdict_resp([True]),
-        ])
+        mock = AsyncMock(
+            side_effect=[
+                _rephrase_resp(1),
+                _tool_call_resp("search_prose", {"query": "dimensionality input output"}),
+                _verdict_resp([True]),
+            ]
+        )
         result = asyncio.run(
             resolve_questions(
                 _unit("eq:ffn"),
@@ -340,8 +342,6 @@ class TestResolveQuestions:
         """The profile model is forwarded on every completion call."""
         profile = Profile(field="ML", subfield="", model="gpt-4o-mini")
         mock = AsyncMock(side_effect=[_rephrase_resp(1), _verdict_resp([False])])
-        asyncio.run(
-            resolve_questions(_unit("algo"), ["Q?"], [], profile, _completion=mock)
-        )
+        asyncio.run(resolve_questions(_unit("algo"), ["Q?"], [], profile, _completion=mock))
         for call in mock.call_args_list:
             assert call.kwargs["model"] == "gpt-4o-mini"

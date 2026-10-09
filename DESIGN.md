@@ -174,11 +174,11 @@ expected value and the implementation):
 # Returns role, confidence, reasoning, test_stub, open_questions.
 # code_stub is intentionally absent — tests are the contract.
 {
-  "role": "spec",
-  "confidence": 0.95,
-  "reasoning": "...",
-  "test_stub": "import numpy as np\ndef test_attention(): ...",
-  "open_questions": []
+    "role": "spec",
+    "confidence": 0.95,
+    "reasoning": "...",
+    "test_stub": "import numpy as np\ndef test_attention(): ...",
+    "open_questions": [],
 }
 ```
 The LLM encodes the mathematical spec as pytest tests with expected values
@@ -202,8 +202,8 @@ class UnitResult(BaseModel):
     role: Role
     confidence: float
     reasoning: str
-    code_stub: str          # from pass 2, empty for non-spec
-    test_stub: str          # from pass 1
+    code_stub: str  # from pass 2, empty for non-spec
+    test_stub: str  # from pass 1
     open_questions: list[str]
 ```
 

@@ -79,11 +79,36 @@ Return the corrected JSON in the same format (same keys, same role/confidence/re
 
 
 # Calls to these names are helpers, not the function under test.
-_CALL_HELPERS = frozenset({
-    "min", "max", "abs", "len", "range", "int", "float", "str", "list", "dict",
-    "set", "tuple", "print", "type", "isinstance", "zip", "enumerate", "sorted",
-    "sum", "any", "all", "bool", "round", "sqrt", "exp", "log",
-})
+_CALL_HELPERS = frozenset(
+    {
+        "min",
+        "max",
+        "abs",
+        "len",
+        "range",
+        "int",
+        "float",
+        "str",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "print",
+        "type",
+        "isinstance",
+        "zip",
+        "enumerate",
+        "sorted",
+        "sum",
+        "any",
+        "all",
+        "bool",
+        "round",
+        "sqrt",
+        "exp",
+        "log",
+    }
+)
 
 
 def _test_calls_function(test_stub: str) -> bool:
@@ -103,9 +128,7 @@ def _test_calls_function(test_stub: str) -> bool:
         return False  # comment-only body or broken stub — needs a fix
     has_assert = any(isinstance(n, ast.Assert) for n in ast.walk(tree))
     has_impl_call = any(
-        isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id not in _CALL_HELPERS
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id not in _CALL_HELPERS
         for n in ast.walk(tree)
     )
     return has_assert and has_impl_call

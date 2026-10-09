@@ -16,7 +16,11 @@ from latex_ia.models import Profile, Role, Unit
 from latex_ia.worker import _extract_json, _test_calls_function, process_unit
 
 
-def _resp_test(role: str = "spec", test_stub: str = "def test_f():\n    assert f(1) == pytest.approx(1.0)", **extra):
+def _resp_test(
+    role: str = "spec",
+    test_stub: str = "def test_f():\n    assert f(1) == pytest.approx(1.0)",
+    **extra,
+):
     """Mock response for pass 1 (classify + test generation)."""
     payload = {
         "role": role,
@@ -132,11 +136,13 @@ class TestProcessUnit:
         """A test that only calls pytest.approx (not the function) triggers a fix pass."""
         bad_stub = "def test_f():\n    expected = 1.0\n    assert expected == pytest.approx(1.0)"
         good_stub = "def test_f():\n    assert f(1) == pytest.approx(1.0)"
-        completion = AsyncMock(side_effect=[
-            _resp_test("spec", test_stub=bad_stub),
-            _resp_test("spec", test_stub=good_stub),  # fix response
-            _resp_code(),                              # pass 2
-        ])
+        completion = AsyncMock(
+            side_effect=[
+                _resp_test("spec", test_stub=bad_stub),
+                _resp_test("spec", test_stub=good_stub),  # fix response
+                _resp_code(),  # pass 2
+            ]
+        )
         result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
         assert completion.call_count == 3
         assert result.test_stub == good_stub

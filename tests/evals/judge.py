@@ -72,8 +72,12 @@ def judge(
         )
     except Exception as exc:
         _msg = str(exc).lower()
-        if any(tok in _msg for tok in ("api key", "api_key", "credentials", "authentication", "unauthorized")):
+        if any(
+            tok in _msg
+            for tok in ("api key", "api_key", "credentials", "authentication", "unauthorized")
+        ):
             import pytest
+
             pytest.skip(f"no API key configured for model '{model}' — {exc}")
         raise
     raw = response.choices[0].message.content or ""
@@ -83,7 +87,5 @@ def judge(
         raise ValueError(f"judge returned unparseable response: {raw!r}") from exc
 
     if threshold is not None and verdict.score < threshold:
-        raise AssertionError(
-            f"judge score {verdict.score:.2f} < {threshold} — {verdict.reasoning}"
-        )
+        raise AssertionError(f"judge score {verdict.score:.2f} < {threshold} — {verdict.reasoning}")
     return verdict.score

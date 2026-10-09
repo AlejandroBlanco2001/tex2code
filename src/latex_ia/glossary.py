@@ -26,7 +26,7 @@ class GlossaryEntry:
     """One symbol → source mapping stored in the glossary."""
 
     symbol: str
-    raw: str           # LaTeX source of the defining unit
+    raw: str  # LaTeX source of the defining unit
     unit_id: str
     role: Role
 

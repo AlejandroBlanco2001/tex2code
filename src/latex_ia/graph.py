@@ -83,9 +83,7 @@ def topological_sort(
                 successors[dep_id].add(unit_id)
                 in_degree[unit_id] += 1
 
-    queue: deque[str] = deque(
-        uid for uid in in_degree if in_degree[uid] == 0
-    )
+    queue: deque[str] = deque(uid for uid in in_degree if in_degree[uid] == 0)
     ordered: list[Unit] = []
 
     while queue:

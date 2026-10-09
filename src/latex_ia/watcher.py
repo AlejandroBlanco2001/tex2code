@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from rich.console import Console
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -15,7 +15,8 @@ from watchdog.observers import Observer
 from latex_ia.classifier.rules import RuleClassifier
 from latex_ia.glossary import Glossary
 from latex_ia.graph import build_dependency_map, topological_sort
-from latex_ia.manifest import load as load_manifest, save as save_manifest
+from latex_ia.manifest import load as load_manifest
+from latex_ia.manifest import save as save_manifest
 from latex_ia.models import Manifest, Profile, Role
 from latex_ia.output import write_result
 from latex_ia.parser import parse_document
@@ -65,9 +66,7 @@ async def _process_units(
     units = parsed.units
     doc_text = parsed.source
     changed_ids: set[str] = {
-        u.id
-        for u in units
-        if u.id not in manifest.entries or manifest.entries[u.id].hash != u.hash
+        u.id for u in units if u.id not in manifest.entries or manifest.entries[u.id].hash != u.hash
     }
 
     if not changed_ids:
@@ -122,9 +121,7 @@ async def _process_units(
                         f"    [dim]↳ resolved {len(revision.resolved)}, "
                         f"{len(revision.unresolved)} remain[/dim]"
                     )
-                    result = result.model_copy(
-                        update={"open_questions": revision.unresolved}
-                    )
+                    result = result.model_copy(update={"open_questions": revision.unresolved})
 
             # Update glossary immediately so subsequent units can use this definition.
             glossary.update(unit, result.role)

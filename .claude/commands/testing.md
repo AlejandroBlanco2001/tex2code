@@ -22,8 +22,8 @@ Write or review tests for this project following these rules.
 ```python
 # correct
 @patch("latex_ia.worker.litellm.completion")
-def test_something(mock_completion):
-    ...
+def test_something(mock_completion): ...
+
 
 # wrong — do not do this
 def test_something():

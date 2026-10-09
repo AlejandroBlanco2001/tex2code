@@ -13,10 +13,10 @@ from latex_ia.models import Manifest, ProcessMode, Role
 
 # Ground truth: unit_id → expected role
 GOLDEN: dict[str, Role] = {
-    "def:graph": Role.definition,    # \begin{tcprocess} in "Notation" section
-    "model:gnn": Role.spec,          # \begin{implement} → always spec
-    "impl:loss": Role.spec,          # \begin{implement} → always spec
-    "spec:training": Role.spec,      # \begin{tcprocess} in "Method" section
+    "def:graph": Role.definition,  # \begin{tcprocess} in "Notation" section
+    "model:gnn": Role.spec,  # \begin{implement} → always spec
+    "impl:loss": Role.spec,  # \begin{implement} → always spec
+    "spec:training": Role.spec,  # \begin{tcprocess} in "Method" section
     "assump:gaussian": Role.assumption,  # \begin{tcprocess} with "we assume"
 }
 
@@ -94,14 +94,17 @@ class TestGateStrict:
 
     def test_hash_cache_skips_unchanged(self, sample_unit_map):
         from latex_ia.models import ManifestEntry
+
         unit = sample_unit_map["model:gnn"]
-        manifest = Manifest(entries={
-            unit.id: ManifestEntry(
-                hash=unit.hash,
-                role=Role.spec,
-                last_processed="2026-01-01",
-            )
-        })
+        manifest = Manifest(
+            entries={
+                unit.id: ManifestEntry(
+                    hash=unit.hash,
+                    role=Role.spec,
+                    last_processed="2026-01-01",
+                )
+            }
+        )
         result = gate(unit, manifest)
         assert result is not None and result.skipped
         assert result.tier_used == 0
