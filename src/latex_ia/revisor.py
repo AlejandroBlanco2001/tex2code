@@ -22,6 +22,24 @@ _STOP_WORDS = frozenset({
 })
 
 _RE_WORD = re.compile(r"\b\w{3,}\b")
+_RE_LATEX_CMD = re.compile(r"\\[a-zA-Z]+")
+# camelCase identifiers: fPhi, gPhi, qPhi, pT, pA — lowercase start, contains uppercase
+_RE_CAMEL = re.compile(r"[a-z][a-zA-Z]*[A-Z][a-zA-Z]*")
+# p(eps), q(zeta) — extract the variable name inside parens
+_RE_PAREN_VAR = re.compile(r"\b[pqfgh]\((\w{2,})\)")
+
+_REPHRASE_SYSTEM = """\
+You are a search query optimizer for a mathematical research paper in LaTeX.
+For each question, generate 3 short keyword queries (5 words max each) that would
+help find the answer by searching the raw LaTeX source.
+Focus on:
+- LaTeX symbol names (e.g. "\\beps Gaussian prior")
+- Equivalent terminology (e.g. "noise variable auxiliary distribution")
+- LaTeX patterns that may appear literally (e.g. "mathcal N reparameterization")
+
+Respond ONLY with a JSON object, no prose:
+{"variants": [["q1_v1", "q1_v2", "q1_v3"], ["q2_v1", "q2_v2", "q2_v3"]]}
+"""
 
 _TOOLS = [
     {
@@ -66,8 +84,9 @@ _TOOLS = [
 _SYSTEM = """\
 You are reviewing open questions raised during analysis of a research paper section.
 Use the search_document and get_unit tools to look for answers inside the paper.
+Relevant passages have already been pre-loaded below each question — search further only if needed.
 
-Once you have finished searching, respond with ONLY a JSON object — no prose, no fences:
+Once you have finished, respond with ONLY a JSON object — no prose, no fences:
 {
   "results": [
     {"answered": true, "evidence": "<one sentence citing the passage>"},
@@ -76,6 +95,27 @@ Once you have finished searching, respond with ONLY a JSON object — no prose, 
 }
 One entry per question in the same order.
 """
+
+
+def _extract_symbols(text: str) -> set[str]:
+    """Extract LaTeX-style math identifiers from question text for exact search."""
+    symbols: set[str] = set()
+    for cmd in _RE_LATEX_CMD.findall(text):
+        symbols.add(cmd)
+    for name in _RE_CAMEL.findall(text):
+        symbols.add(name)
+        symbols.add(f"\\{name}")
+    for var in _RE_PAREN_VAR.findall(text):
+        # p(eps) → search for eps, \eps, \beps (common LaTeX bold prefix)
+        symbols.update({var, f"\\{var}", f"\\b{var}"})
+    return symbols
+
+
+def _graph_neighbors(unit_id: str, deps: dict[str, set[str]]) -> set[str]:
+    """Return direct predecessors and successors of *unit_id* in the dependency graph."""
+    predecessors = deps.get(unit_id, set())
+    successors = {uid for uid, d in deps.items() if unit_id in d}
+    return predecessors | successors
 
 
 def _search_units(query: str, all_units: list[Unit], exclude_id: str) -> list[Unit]:
@@ -95,11 +135,98 @@ def _search_units(query: str, all_units: list[Unit], exclude_id: str) -> list[Un
     return [u for _, u in scored[:_MAX_CANDIDATES]]
 
 
+def _gather_candidates(
+    query: str,
+    variants: list[str],
+    all_units: list[Unit],
+    exclude_id: str,
+    *,
+    symbols: set[str] | None = None,
+    neighbor_ids: set[str] | None = None,
+) -> list[Unit]:
+    """
+    Build a candidate pool combining three signals:
+    1. Exact LaTeX symbol match (boosted score).
+    2. Keyword overlap across the query and its rephrased variants.
+    3. Graph neighbors (always included regardless of score).
+    """
+    unit_map = {u.id: u for u in all_units}
+    scores: dict[str, int] = {}
+
+    # 1. Symbol search — exact substring match on raw LaTeX, heavily boosted.
+    if symbols:
+        for unit in all_units:
+            if unit.id == exclude_id:
+                continue
+            if any(sym in unit.raw for sym in symbols):
+                scores[unit.id] = scores.get(unit.id, 0) + 5
+
+    # 2. Keyword search over the original query and all variants.
+    for q in [query] + variants:
+        words = {w for w in _RE_WORD.findall(q.lower()) if w not in _STOP_WORDS}
+        for unit in all_units:
+            if unit.id == exclude_id:
+                continue
+            raw_lower = unit.raw.lower()
+            hit = sum(1 for w in words if w in raw_lower)
+            if hit:
+                scores[unit.id] = scores.get(unit.id, 0) + hit
+
+    ranked = sorted(
+        [unit_map[uid] for uid in scores if uid in unit_map],
+        key=lambda u: scores[u.id],
+        reverse=True,
+    )[:_MAX_CANDIDATES]
+
+    # 3. Graph neighbors — append those not already ranked.
+    if neighbor_ids:
+        ranked_ids = {u.id for u in ranked}
+        for uid in neighbor_ids:
+            if uid != exclude_id and uid not in ranked_ids and uid in unit_map:
+                ranked.append(unit_map[uid])
+
+    return ranked
+
+
 def _format_units(units: list[Unit]) -> str:
-    """Format a list of units as labelled passages."""
+    """Format units as labelled passages for the LLM."""
     if not units:
         return "No matching units found."
     return "\n---\n".join(f"[{u.id}]\n{u.raw[:_MAX_PASSAGE_CHARS]}" for u in units)
+
+
+async def _rephrase_questions(
+    questions: list[str],
+    profile: Profile,
+    *,
+    _completion=None,
+) -> list[list[str]]:
+    """
+    Generate 3 search-optimised keyword variants per question in one LLM call.
+
+    Returns a list parallel to *questions*; each element is a list of variant
+    query strings.  Falls back to empty lists on any error so the caller
+    degrades gracefully.
+    """
+    completion = _completion if _completion is not None else litellm.acompletion
+    q_list = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    response = await completion(
+        model=profile.model,
+        messages=[
+            {"role": "system", "content": _REPHRASE_SYSTEM},
+            {"role": "user", "content": q_list},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+    )
+    try:
+        data = json.loads(response.choices[0].message.content)
+        variants = data.get("variants", [])
+        while len(variants) < len(questions):
+            variants.append([])
+        return variants[: len(questions)]
+    except (json.JSONDecodeError, AttributeError):
+        return [[] for _ in questions]
 
 
 @dataclass
@@ -116,14 +243,20 @@ async def resolve_questions(
     all_units: list[Unit],
     profile: Profile,
     *,
+    deps: dict[str, set[str]] | None = None,
     _completion=None,
 ) -> RevisionResult:
     """
     Agent-based revisor: the LLM searches the document to answer each question.
 
-    Runs an agentic tool-call loop (up to _MAX_TOOL_ROUNDS) where the LLM
-    can call search_document and get_unit.  Returns which questions are
-    answered by the paper and which are genuinely missing.
+    Three search signals are combined before the agent loop starts:
+    1. Question rephrasing — 3 keyword variants per question via a cheap LLM call.
+    2. Symbol extraction — exact LaTeX command search (\\beps, \\pA, fPhi …).
+    3. Graph traversal — dep-graph neighbours of the target unit are always included.
+
+    Pre-searched passages are injected into the initial prompt so the agent
+    starts with good context.  Tool calls (search_document, get_unit) are
+    available for follow-up.
     """
     if not questions:
         return RevisionResult()
@@ -131,8 +264,24 @@ async def resolve_questions(
     completion = _completion if _completion is not None else litellm.acompletion
     unit_index = {u.id: u for u in all_units}
 
+    # --- Pre-computation ---
+    all_symbols = set().union(*(_extract_symbols(q) for q in questions))
+    neighbor_ids = _graph_neighbors(unit.id, deps) if deps else set()
+    variants_per_q = await _rephrase_questions(questions, profile, _completion=_completion)
+
+    # Flatten all variants for shared search (used in tool calls too).
+    all_variants = [v for vs in variants_per_q for v in vs]
+
     def _run_search_document(query: str) -> str:
-        return _format_units(_search_units(query, all_units, unit.id))
+        candidates = _gather_candidates(
+            query,
+            all_variants,
+            all_units,
+            unit.id,
+            symbols=all_symbols,
+            neighbor_ids=neighbor_ids,
+        )
+        return _format_units(candidates)
 
     def _run_get_unit(unit_id: str) -> str:
         u = unit_index.get(unit_id)
@@ -140,14 +289,26 @@ async def resolve_questions(
             return f"Unit '{unit_id}' not found. Try search_document to discover unit IDs."
         return f"[{u.id}]\n{u.raw}"
 
-    q_list = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    # Build initial prompt with pre-loaded passages per question.
+    parts: list[str] = []
+    for q, variants in zip(questions, variants_per_q):
+        q_symbols = _extract_symbols(q)
+        candidates = _gather_candidates(
+            q, variants, all_units, unit.id,
+            symbols=q_symbols,
+            neighbor_ids=neighbor_ids,
+        )
+        passages = _format_units(candidates)
+        parts.append(f"Question: {q}\nPre-loaded passages:\n{passages}")
+
     messages: list[dict] = [
         {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
             "content": (
-                f"Questions about unit '{unit.id}':\n{q_list}\n\n"
-                "Search the document to find answers, then give your verdict."
+                f"Unit under review: '{unit.id}'\n\n"
+                + "\n\n".join(parts)
+                + "\n\nSearch further if needed, then give your verdict."
             ),
         },
     ]
@@ -167,7 +328,6 @@ async def resolve_questions(
             raw = msg.content or ""
             break
 
-        # Append assistant turn with tool calls.
         messages.append({
             "role": "assistant",
             "content": msg.content,
@@ -184,7 +344,6 @@ async def resolve_questions(
             ],
         })
 
-        # Execute tools and append results.
         for tc in tool_calls:
             args = json.loads(tc.function.arguments)
             if tc.function.name == "search_document":
@@ -195,7 +354,6 @@ async def resolve_questions(
                 content = f"Unknown tool: {tc.function.name}"
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
     else:
-        # Max rounds reached — ask for final verdict with forced JSON.
         messages.append({
             "role": "user",
             "content": "Provide your final verdict as the JSON object described above.",

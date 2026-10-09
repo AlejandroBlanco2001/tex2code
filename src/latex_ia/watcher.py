@@ -111,6 +111,7 @@ async def _process_units(
                     result.open_questions,
                     units,
                     profile,
+                    deps=deps,
                     _completion=_completion,
                 )
                 if revision.resolved:
