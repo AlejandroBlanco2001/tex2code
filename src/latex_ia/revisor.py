@@ -86,6 +86,15 @@ You are reviewing open questions raised during analysis of a research paper sect
 Use the search_document and get_unit tools to look for answers inside the paper.
 Relevant passages have already been pre-loaded below each question — search further only if needed.
 
+Mark a question answered=true if ANY of these hold:
+- The paper gives an explicit answer (e.g. a formula, a distribution, a value).
+- The paper gives a recommendation or example (e.g. "e.g. SGD or Adagrad") — good enough to implement.
+- The paper gives a partial answer covering the main case (even if edge cases are left open).
+- The mathematical definition is present, even if no Python code exists (code is derived from math).
+
+Mark answered=false ONLY if the paper genuinely contains no relevant information — for example,
+a convergence criterion that is left entirely to the practitioner with no guidance whatsoever.
+
 Once you have finished, respond with ONLY a JSON object — no prose, no fences:
 {
   "results": [
