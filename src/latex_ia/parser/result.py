@@ -16,6 +16,7 @@ class ParseResult:
 
     units: list[Unit] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    source: str = ""  # full inlined LaTeX source (all \input files merged)
 
     def warn(self, msg: str) -> None:
         """Record a warning to both the logger and the warnings list."""

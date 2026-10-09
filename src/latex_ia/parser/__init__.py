@@ -27,6 +27,7 @@ def parse_document(path: Path) -> ParseResult:
     result = ParseResult()
     try:
         source = resolve_source(path, result)
+        result.source = source
         parse_source(source, result)
     except Exception as exc:  # noqa: BLE001
         result.warn(f"parse failed for {path}: {exc}")

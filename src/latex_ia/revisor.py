@@ -13,6 +13,8 @@ from latex_ia.models import Profile, Unit
 _MAX_TOOL_ROUNDS = 4
 _MAX_PASSAGE_CHARS = 800
 _MAX_CANDIDATES = 6
+_MAX_PROSE_CHUNKS = 4
+_MIN_PARA_CHARS = 60  # skip very short paragraphs (headings, blank lines)
 
 _STOP_WORDS = frozenset({
     "what", "the", "are", "for", "and", "that", "this", "from", "how",
@@ -47,8 +49,31 @@ _TOOLS = [
         "function": {
             "name": "search_document",
             "description": (
-                "Search the paper for units whose text contains the given keywords. "
-                "Use this to find definitions, equations, or passages relevant to a question."
+                "Search the paper's structured units (equations, algorithms, definitions) "
+                "for those whose LaTeX content matches the given keywords."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords or symbol names to search for",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_prose",
+            "description": (
+                "Search the paper's unstructured prose text (paragraphs, captions, "
+                "surrounding explanations) for passages matching the given keywords. "
+                "Use this when the answer is likely stated in running text rather than "
+                "inside an equation or algorithm block — e.g. dimension specifications, "
+                "hyper-parameter values, or informal constraints."
             ),
             "parameters": {
                 "type": "object",
@@ -83,8 +108,12 @@ _TOOLS = [
 
 _SYSTEM = """\
 You are reviewing open questions raised during analysis of a research paper section.
-Use the search_document and get_unit tools to look for answers inside the paper.
+Use the available tools to look for answers inside the paper:
+- search_document — searches structured units (equations, algorithms, definitions)
+- search_prose — searches unstructured running text (dimensions, hyper-parameters, informal constraints)
+- get_unit — retrieves a specific unit's full LaTeX content by ID
 Relevant passages have already been pre-loaded below each question — search further only if needed.
+Prefer search_prose when the answer is likely stated in surrounding text (e.g. "the dimensionality … is d_model=512").
 
 Mark a question answered=true if ANY of these hold:
 - The paper gives an explicit answer (e.g. a formula, a distribution, a value).
@@ -204,6 +233,37 @@ def _format_units(units: list[Unit]) -> str:
     return "\n---\n".join(f"[{u.id}]\n{u.raw[:_MAX_PASSAGE_CHARS]}" for u in units)
 
 
+def _search_prose(query: str, doc_text: str, *, symbols: set[str] | None = None) -> str:
+    """
+    Split *doc_text* into paragraphs and return the top-scoring ones for *query*.
+
+    Scoring: symbol exact-match (+5) + keyword overlap (+1 per hit).
+    Returns formatted text passages or a fallback message.
+    """
+    if not doc_text:
+        return "No prose text available."
+
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", doc_text)]
+    paragraphs = [p for p in paragraphs if len(p) >= _MIN_PARA_CHARS]
+
+    words = {w for w in _RE_WORD.findall(query.lower()) if w not in _STOP_WORDS}
+    scored: list[tuple[int, str]] = []
+    for para in paragraphs:
+        score = 0
+        if symbols:
+            score += 5 * sum(1 for sym in symbols if sym in para)
+        para_lower = para.lower()
+        score += sum(1 for w in words if w in para_lower)
+        if score:
+            scored.append((score, para))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:_MAX_PROSE_CHUNKS]
+    if not top:
+        return "No matching prose passages found."
+    return "\n---\n".join(f"[prose]\n{p[:_MAX_PASSAGE_CHARS]}" for _, p in top)
+
+
 async def _rephrase_questions(
     questions: list[str],
     profile: Profile,
@@ -253,6 +313,7 @@ async def resolve_questions(
     profile: Profile,
     *,
     deps: dict[str, set[str]] | None = None,
+    doc_text: str = "",
     _completion=None,
 ) -> RevisionResult:
     """
@@ -291,6 +352,10 @@ async def resolve_questions(
             neighbor_ids=neighbor_ids,
         )
         return _format_units(candidates)
+
+    def _run_search_prose(query: str) -> str:
+        q_symbols = _extract_symbols(query) | all_symbols
+        return _search_prose(query, doc_text, symbols=q_symbols)
 
     def _run_get_unit(unit_id: str) -> str:
         u = unit_index.get(unit_id)
@@ -357,6 +422,8 @@ async def resolve_questions(
             args = json.loads(tc.function.arguments)
             if tc.function.name == "search_document":
                 content = _run_search_document(args.get("query", ""))
+            elif tc.function.name == "search_prose":
+                content = _run_search_prose(args.get("query", ""))
             elif tc.function.name == "get_unit":
                 content = _run_get_unit(args.get("unit_id", ""))
             else:

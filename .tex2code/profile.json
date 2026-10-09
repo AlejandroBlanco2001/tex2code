@@ -1,0 +1,13 @@
+{
+  "field": "machine-learning",
+  "subfield": "",
+  "venue_type": "conference",
+  "education_level": "phd",
+  "audience": "engineers",
+  "code_reader_expertise": "reads-python",
+  "proofs_are_spec": false,
+  "spec_heuristics": [],
+  "tone": "technical-concise",
+  "model": "gpt-4o",
+  "prior_work_context": ""
+}

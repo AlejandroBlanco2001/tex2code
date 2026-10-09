@@ -12,6 +12,7 @@ _QUESTIONS = Path(".tex2code/questions.md")
 _RE_HEX = re.compile(r"^[0-9a-f]+$")
 _RE_SECTION_NUM = re.compile(r"^[\d.\s]+")
 _RE_NONALPHA = re.compile(r"[^a-zA-Z\s]")
+_RE_LABEL = re.compile(r"\\label\{([^}]+)\}")
 _SECTION_STOP = frozenset({"and", "the", "of", "in", "for", "a", "an", "with", "on"})
 
 
@@ -29,6 +30,18 @@ def _name_from_section(section_path: list[str], unit_type: str) -> str:
     return "_".join(words) if words else unit_type
 
 
+def _name_from_label(raw: str) -> str | None:
+    """Extract a snake_case name from the first \\label{} in the unit's raw LaTeX."""
+    m = _RE_LABEL.search(raw)
+    if not m:
+        return None
+    label = m.group(1)
+    # Strip common prefixes (eq:, fig:, tab:, alg:) and convert to snake_case.
+    label = re.sub(r"^[a-z]{1,4}:", "", label)
+    name = re.sub(r"[^a-zA-Z0-9_]", "_", label)
+    return name.strip("_") or None
+
+
 def _stem(unit: Unit) -> str:
     """Derive a readable Python module name from a unit."""
     uid = unit.id
@@ -36,10 +49,26 @@ def _stem(unit: Unit) -> str:
     unit_type = uid.split(":")[0] if ":" in uid else "unit"
 
     if _is_hash(suffix):
+        # Prefer: label inside raw → section path → unit type.
+        from_label = _name_from_label(unit.raw)
+        if from_label:
+            return from_label
         return _name_from_section(unit.section_path, unit_type)
 
     name = re.sub(r"[^a-zA-Z0-9_]", "_", suffix)
     return name.strip("_") or "unit"
+
+
+def _unique_stem(stem: str, src_dir: Path) -> str:
+    """Return *stem* unchanged if the target file does not exist; otherwise append the hash suffix."""
+    if not (src_dir / f"{stem}.py").exists():
+        return stem
+    # Find a free name by appending incrementing suffixes.
+    for i in range(2, 100):
+        candidate = f"{stem}_{i}"
+        if not (src_dir / f"{candidate}.py").exists():
+            return candidate
+    return stem  # give up — caller will overwrite
 
 
 def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Path]:
@@ -50,12 +79,12 @@ def write_result(unit: Unit, result: UnitResult, manifest: Manifest) -> list[Pat
     written: list[Path] = []
 
     if result.role == Role.spec and result.code_stub:
-        stem = _stem(unit)
         src_dir = _GENERATED / "src"
         test_dir = _GENERATED / "tests"
         src_dir.mkdir(parents=True, exist_ok=True)
         test_dir.mkdir(parents=True, exist_ok=True)
 
+        stem = _unique_stem(_stem(unit), src_dir)
         src_file = src_dir / f"{stem}.py"
         src_file.write_text(result.code_stub, encoding="utf-8")
         written.append(src_file)

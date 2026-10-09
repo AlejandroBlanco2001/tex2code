@@ -12,6 +12,7 @@ from latex_ia.revisor import (
     _extract_symbols,
     _gather_candidates,
     _graph_neighbors,
+    _search_prose,
     _search_units,
     resolve_questions,
 )
@@ -128,6 +129,40 @@ class TestGatherCandidates:
             "algo",
         )
         assert any(u.id == "sec:noise" for u in results)
+
+
+class TestSearchProse:
+    def test_matches_paragraph_by_keyword(self):
+        """A paragraph containing the query keyword is returned."""
+        doc = (
+            "This is irrelevant filler text that is long enough to pass the filter.\n\n"
+            "The dimensionality of the input and output is $d_{model}=512$, "
+            "and the inner-layer dimensionality is $d_{ff}=2048$.\n\n"
+            "More unrelated filler text that is also long enough for the filter."
+        )
+        result = _search_prose("dimension input output", doc)
+        assert "512" in result
+
+    def test_symbol_exact_match_boosts_score(self):
+        """A paragraph with an exact LaTeX symbol match ranks above keyword-only."""
+        doc = (
+            "Some intro text about training.\n\n"
+            r"The inner-layer has dimensionality $d_{ff}=2048$ and \dmodel=512."
+            "\n\nOther paragraph about optimizer."
+        )
+        result = _search_prose(r"\dmodel dimension", doc, symbols={r"\dmodel"})
+        assert "2048" in result or "512" in result
+
+    def test_empty_doc_returns_fallback(self):
+        """Empty doc_text returns a graceful message."""
+        result = _search_prose("dimension", "")
+        assert "No prose text available" in result
+
+    def test_no_match_returns_fallback(self):
+        """Query with no matching paragraphs returns a graceful message."""
+        doc = "Short.\n\nAnother short line."
+        result = _search_prose("xyzzy unrelated quantum", doc)
+        assert "No matching prose" in result
 
 
 class TestSearchUnits:
@@ -279,6 +314,27 @@ class TestResolveQuestions:
         )
         # Passes without error and the neighbour was in the candidate pool
         assert mock.call_count == 2
+
+    def test_search_prose_tool_call(self):
+        """Agent can call search_prose to search unstructured text."""
+        doc = "The dimensionality of input and output is d_model=512, inner-layer d_ff=2048."
+        mock = AsyncMock(side_effect=[
+            _rephrase_resp(1),
+            _tool_call_resp("search_prose", {"query": "dimensionality input output"}),
+            _verdict_resp([True]),
+        ])
+        result = asyncio.run(
+            resolve_questions(
+                _unit("eq:ffn"),
+                ["What are the dimensions of W1 and W2?"],
+                [],
+                _profile(),
+                doc_text=doc,
+                _completion=mock,
+            )
+        )
+        assert mock.call_count == 3
+        assert result.resolved == ["What are the dimensions of W1 and W2?"]
 
     def test_passes_model_from_profile(self):
         """The profile model is forwarded on every completion call."""

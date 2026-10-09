@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 
@@ -27,9 +28,14 @@ Naming rules:
 
 Test rules:
 - Include all necessary imports (numpy, pytest, etc.) at the top of the test stub.
-- Compute expected values using numpy / math arithmetic directly in the test body.
-  Never call the function under test to obtain the expected value.
-- Use pytest.approx() or numpy.allclose() for floating-point comparisons.
+- Each test must: (1) compute the expected value from arithmetic/numpy — never by calling
+  the function under test; (2) call the function under test with concrete inputs;
+  (3) assert the result matches expected via pytest.approx() or numpy.allclose().
+  Example pattern:
+    expected = np.array([[0.5, 0.5], [0.5, 0.5]])  # computed independently
+    actual = softmax(np.zeros((2, 2)))              # call the function
+    assert np.allclose(actual, expected)            # compare
+- Do NOT comment out the function call or the assertion — both are required.
 - Do NOT include the implementation — only tests.
 - Every generated function must begin with a comment: # spec: <unit_id>
 
@@ -63,6 +69,46 @@ Respond with a single JSON object — no markdown fences, no extra keys:
 """
 
 _RE_FENCE = re.compile(r"```(?:json)?\s*")
+
+_FIX_TEST_MSG = """\
+The test stub you generated does not call the function under test.
+Every test must call the function with concrete inputs and assert the result.
+Do NOT comment out the function call or the assertion.
+Return the corrected JSON in the same format (same keys, same role/confidence/reasoning).
+"""
+
+
+# Calls to these names are helpers, not the function under test.
+_CALL_HELPERS = frozenset({
+    "min", "max", "abs", "len", "range", "int", "float", "str", "list", "dict",
+    "set", "tuple", "print", "type", "isinstance", "zip", "enumerate", "sorted",
+    "sum", "any", "all", "bool", "round", "sqrt", "exp", "log",
+})
+
+
+def _test_calls_function(test_stub: str) -> bool:
+    """
+    Return True if *test_stub* contains at least one assert AND at least one
+    direct non-helper function call (i.e. the function under test is called).
+
+    Attribute calls like pytest.approx() and np.allclose() are excluded — they
+    are test helpers, not the implementation.  Commented-out calls are invisible
+    to the AST parser and correctly trigger a False result.
+    """
+    if not test_stub:
+        return True  # nothing to validate; pass through
+    try:
+        tree = ast.parse(test_stub)
+    except SyntaxError:
+        return False  # comment-only body or broken stub — needs a fix
+    has_assert = any(isinstance(n, ast.Assert) for n in ast.walk(tree))
+    has_impl_call = any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id not in _CALL_HELPERS
+        for n in ast.walk(tree)
+    )
+    return has_assert and has_impl_call
 
 
 def _extract_json(text: str) -> dict:
@@ -110,12 +156,13 @@ async def _classify_and_test(
     completion,
 ) -> UnitResult:
     """Pass 1: classify the unit and generate tests (no implementation)."""
+    messages = [
+        {"role": "system", "content": _SYSTEM_TEST},
+        {"role": "user", "content": _user_prompt(unit, context, profile)},
+    ]
     response = await completion(
         model=profile.model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_TEST},
-            {"role": "user", "content": _user_prompt(unit, context, profile)},
-        ],
+        messages=messages,
         response_format={"type": "json_object"},
         temperature=0.1,
     )
@@ -127,6 +174,24 @@ async def _classify_and_test(
     except ValueError:
         data["role"] = Role.unknown
         data["confidence"] = 0.0
+
+    # Validate that the test actually calls the function; ask for a fix if not.
+    if data.get("role") == Role.spec and not _test_calls_function(data.get("test_stub", "")):
+        fix_messages = messages + [
+            {"role": "assistant", "content": raw},
+            {"role": "user", "content": _FIX_TEST_MSG},
+        ]
+        fix_response = await completion(
+            model=profile.model,
+            messages=fix_messages,
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        try:
+            data = _extract_json(fix_response.choices[0].message.content)
+            data["role"] = Role(data.get("role", "unknown"))
+        except (ValueError, KeyError):
+            pass  # keep the original data if the fix also fails
 
     # code_stub is intentionally absent in pass 1 — default to empty.
     data.setdefault("code_stub", "")

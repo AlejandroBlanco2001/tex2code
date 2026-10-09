@@ -67,7 +67,9 @@ def _process_node(node, section_path: list[str], result: ParseResult) -> None:
 
         case LatexMacroNode(macroname=name) if name in _SECTION_DEPTH:
             argnlist = node.nodeargd.argnlist if node.nodeargd else []
-            title = node_to_text(argnlist[0]) if argnlist else name
+            # Title is the last arg ([None, None, GroupNode] for \section{T},
+            # [CharsNode('*'), None, GroupNode] for \section*{T}).
+            title = node_to_text(argnlist[-1]) if argnlist else name
             depth = _SECTION_DEPTH[name]
             # Mutate in-place so the caller's reference stays in sync.
             section_path[:] = section_path[:depth] + [title]

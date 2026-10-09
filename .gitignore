@@ -19,3 +19,9 @@ wheels/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Environment variable files
+.env
+
+# Outputs
+.tex2code

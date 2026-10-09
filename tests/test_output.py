@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from latex_ia.models import Manifest, Role, Unit, UnitResult
-from latex_ia.output import _stem, write_result
+from latex_ia.models import Manifest, ManifestEntry, Role, Unit, UnitResult
+from latex_ia.output import _stem, _name_from_label, write_result
 
 
 def _unit(id_: str, section_path: list[str] | None = None) -> Unit:
@@ -50,6 +50,22 @@ class TestStem:
         assert "the" not in name.split("_")
         assert "of" not in name.split("_")
 
+    def test_label_in_raw_preferred_over_section_path(self):
+        """A \\label{} inside the equation raw takes priority over section path."""
+        unit = Unit(
+            id="equation:deadbeef01234567",
+            hash="abc",
+            raw=r"\begin{equation}\label{eq:lrate} d^{-0.5} \end{equation}",
+            section_path=["Training", "Optimizer"],
+        )
+        assert _stem(unit) == "lrate"
+
+    def test_name_from_label_strips_prefix(self):
+        assert _name_from_label(r"\label{eq:scaled_dot}") == "scaled_dot"
+
+    def test_name_from_label_returns_none_if_absent(self):
+        assert _name_from_label(r"\begin{equation} x + y \end{equation}") is None
+
 
 class TestWriteResult:
     def test_spec_writes_src_and_test(self, tmp_path, monkeypatch):
@@ -69,6 +85,17 @@ class TestWriteResult:
         )
         written = write_result(unit, _result(Role.spec), Manifest())
         assert any("scaled_dot_product_attention.py" in str(p) for p in written)
+
+    def test_collision_guard_renames_second_file(self, tmp_path, monkeypatch):
+        """Two spec units that map to the same stem get distinct filenames."""
+        monkeypatch.chdir(tmp_path)
+        unit_a = _unit("equation:aabbccdd11223344", section_path=["Training", "Optimizer"])
+        unit_b = _unit("equation:11223344aabbccdd", section_path=["Training", "Optimizer"])
+        write_result(unit_a, _result(Role.spec), Manifest())
+        written_b = write_result(unit_b, _result(Role.spec), Manifest())
+        paths = [str(p) for p in written_b if "src" in str(p)]
+        assert paths  # at least one src file
+        assert "optimizer.py" not in paths[0]  # should be optimizer_2.py
 
     def test_non_spec_writes_nothing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

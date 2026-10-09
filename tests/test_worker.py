@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from latex_ia.models import Profile, Role, Unit
-from latex_ia.worker import _extract_json, process_unit
+from latex_ia.worker import _extract_json, _test_calls_function, process_unit
 
 
-def _resp_test(role: str = "spec", test_stub: str = "def test_f(): pass", **extra):
+def _resp_test(role: str = "spec", test_stub: str = "def test_f():\n    assert f(1) == pytest.approx(1.0)", **extra):
     """Mock response for pass 1 (classify + test generation)."""
     payload = {
         "role": role,
@@ -43,6 +43,32 @@ def _unit(id_: str = "algorithm") -> Unit:
 
 def _profile() -> Profile:
     return Profile(field="machine-learning", model="gpt-4o-mini")
+
+
+class TestTestCallsFunction:
+    def test_valid_test_passes(self):
+        stub = "def test_f():\n    expected = 1.0\n    assert f(1) == expected"
+        assert _test_calls_function(stub) is True
+
+    def test_no_assert_fails(self):
+        stub = "def test_f():\n    result = f(1)"
+        assert _test_calls_function(stub) is False
+
+    def test_only_helper_calls_fails(self):
+        """assert expected == pytest.approx(x) — no call to the function under test."""
+        stub = "def test_f():\n    expected = 1.0\n    assert expected == pytest.approx(1.0)"
+        assert _test_calls_function(stub) is False
+
+    def test_commented_out_assert_fails(self):
+        """comment-only body is a SyntaxError → treated as invalid."""
+        stub = "def test_f():\n    # assert f(1) == expected"
+        assert _test_calls_function(stub) is False
+
+    def test_empty_stub_passes(self):
+        assert _test_calls_function("") is True
+
+    def test_syntax_error_fails(self):
+        assert _test_calls_function("def broken(") is False
 
 
 class TestExtractJson:
@@ -101,6 +127,19 @@ class TestProcessUnit:
         result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
         assert result.role == Role.unknown
         assert result.confidence == 0.0
+
+    def test_invalid_test_stub_triggers_fix_pass(self):
+        """A test that only calls pytest.approx (not the function) triggers a fix pass."""
+        bad_stub = "def test_f():\n    expected = 1.0\n    assert expected == pytest.approx(1.0)"
+        good_stub = "def test_f():\n    assert f(1) == pytest.approx(1.0)"
+        completion = AsyncMock(side_effect=[
+            _resp_test("spec", test_stub=bad_stub),
+            _resp_test("spec", test_stub=good_stub),  # fix response
+            _resp_code(),                              # pass 2
+        ])
+        result = asyncio.run(process_unit(_unit(), [_unit()], _profile(), _completion=completion))
+        assert completion.call_count == 3
+        assert result.test_stub == good_stub
 
     def test_open_questions_propagated(self):
         """open_questions from pass 1 are preserved in the final UnitResult."""

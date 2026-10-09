@@ -18,7 +18,7 @@ from latex_ia.graph import build_dependency_map, topological_sort
 from latex_ia.manifest import load as load_manifest, save as save_manifest
 from latex_ia.models import Manifest, Profile, Role
 from latex_ia.output import write_result
-from latex_ia.parser import parse
+from latex_ia.parser import parse_document
 from latex_ia.revisor import resolve_questions
 from latex_ia.worker import process_unit
 
@@ -61,7 +61,9 @@ async def _process_units(
     resolved symbol definitions across the pass; each unit receives injected
     definitions for its symbols before its LLM call.
     """
-    units = parse(tex_path)
+    parsed = parse_document(tex_path)
+    units = parsed.units
+    doc_text = parsed.source
     changed_ids: set[str] = {
         u.id
         for u in units
@@ -112,6 +114,7 @@ async def _process_units(
                     units,
                     profile,
                     deps=deps,
+                    doc_text=doc_text,
                     _completion=_completion,
                 )
                 if revision.resolved:
