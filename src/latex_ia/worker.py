@@ -71,16 +71,20 @@ async def process_unit(
     all_units: list[Unit],
     profile: Profile,
     *,
+    glossary=None,  # Glossary | None — avoids circular import
     _completion=None,
 ) -> UnitResult:
     """
     Classify *unit* and (if spec) generate code via a single async LLM call.
 
+    *glossary* enriches the context with resolved symbol definitions so the
+    LLM receives definitions of symbols used by *unit* even when they appear
+    far away in the document.
     *_completion* defaults to litellm.acompletion and is injectable for tests.
     """
     completion = _completion if _completion is not None else litellm.acompletion
 
-    context = build_context(unit, all_units)
+    context = build_context(unit, all_units, glossary)
     prompt = _user_prompt(unit, context, profile)
 
     response = await completion(

@@ -12,13 +12,36 @@ from rich.console import Console
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from latex_ia.classifier.rules import RuleClassifier
+from latex_ia.glossary import Glossary
+from latex_ia.graph import build_dependency_map, topological_sort
 from latex_ia.manifest import load as load_manifest, save as save_manifest
-from latex_ia.models import Manifest, Profile
+from latex_ia.models import Manifest, Profile, Role
 from latex_ia.output import write_result
 from latex_ia.parser import parse
 from latex_ia.worker import process_unit
 
 console = Console()
+
+_rule_clf = RuleClassifier()
+
+
+def _role_hints(units, manifest: Manifest) -> dict[str, Role]:
+    """
+    Build a unit_id → Role map from the manifest and rule classifier.
+
+    Used to seed the dependency graph with known role information before
+    any LLM calls are made.
+    """
+    hints: dict[str, Role] = {}
+    for unit in units:
+        if unit.id in manifest.entries:
+            hints[unit.id] = manifest.entries[unit.id].role
+            continue
+        result = _rule_clf.classify(unit)
+        if result is not None:
+            hints[unit.id] = result.role
+    return hints
 
 
 async def _process_units(
@@ -30,51 +53,77 @@ async def _process_units(
     _completion=None,
 ) -> None:
     """
-    Parse *tex_path*, find changed units, and process them concurrently.
+    Parse *tex_path*, sort changed units by dependency order, and process them.
 
-    Changed units are those whose hash differs from the manifest entry.
-    Results are written to disk and the manifest is updated after each unit.
-    *on_result(unit, result)* is called for each successfully processed unit.
+    Processing order guarantees that definition/assumption units are handled
+    before the spec units that depend on them.  A shared Glossary accumulates
+    resolved symbol definitions across the pass; each unit receives injected
+    definitions for its symbols before its LLM call.
     """
     units = parse(tex_path)
-    changed = [
-        u
+    changed_ids: set[str] = {
+        u.id
         for u in units
         if u.id not in manifest.entries or manifest.entries[u.id].hash != u.hash
-    ]
+    }
 
-    if not changed:
+    if not changed_ids:
         return
 
-    console.print(f"\n[bold cyan]↻[/bold cyan] {len(changed)} changed unit(s)")
+    # Build dependency graph and sort all units; then filter to changed ones
+    # while preserving the topological order.
+    hints = _role_hints(units, manifest)
+    deps = build_dependency_map(units, role_hints=hints)
+    ordered_all = topological_sort(units, deps)
+    changed = [u for u in ordered_all if u.id in changed_ids]
 
-    tasks = [process_unit(u, units, profile, _completion=_completion) for u in changed]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    console.print(f"\n[bold cyan]↻[/bold cyan] {len(changed)} changed unit(s) (topological order)")
 
-    for unit, result in zip(changed, results):
-        if isinstance(result, Exception):
-            console.print(f"  [red]✗[/red] {unit.id}: {result}")
-            continue
+    glossary = Glossary()
 
-        written = write_result(unit, result, manifest)
-        save_manifest(manifest)
+    # Seed glossary from already-processed definition units in the manifest.
+    id_to_unit = {u.id: u for u in units}
+    for unit_id, entry in manifest.entries.items():
+        if entry.role in (Role.definition, Role.assumption) and unit_id in id_to_unit:
+            glossary.update(id_to_unit[unit_id], entry.role)
 
-        role_color = {"spec": "green", "result": "yellow"}.get(str(result.role), "white")
-        conf = f"{result.confidence:.0%}"
-        files_note = f"  [dim]({len(written)} file(s))[/dim]" if written else ""
-        console.print(
-            f"  [dim]→[/dim] {unit.id} "
-            f"[{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
-        )
-
-        if result.open_questions:
-            console.print(
-                f"    [yellow]⚠ {len(result.open_questions)} question(s) → "
-                ".tex2code/questions.md[/yellow]"
+    # Process in dependency order — sequential, not concurrent, so each unit
+    # can benefit from the glossary entries added by its predecessors.
+    for unit in changed:
+        console.print(f"  [dim]→[/dim] {unit.id}", end=" ", flush=True)
+        try:
+            result = await process_unit(
+                unit,
+                units,
+                profile,
+                glossary=glossary,
+                _completion=_completion,
             )
 
-        if on_result is not None:
-            on_result(unit, result)
+            # Update glossary immediately so subsequent units can use this definition.
+            glossary.update(unit, result.role)
+
+            written = write_result(unit, result, manifest)
+            save_manifest(manifest)
+
+            role_color = {"spec": "green", "result": "yellow"}.get(str(result.role), "white")
+            conf = f"{result.confidence:.0%}"
+            files_note = f"  [dim]({len(written)} file(s))[/dim]" if written else ""
+            console.print(
+                f"[{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
+            )
+
+            if result.open_questions:
+                console.print(
+                    f"    [yellow]⚠ {len(result.open_questions)} question(s) → "
+                    ".tex2code/questions.md[/yellow]"
+                )
+
+            if on_result is not None:
+                on_result(unit, result)
+
+        except Exception as exc:
+            console.print(f"[red]error:[/red] {exc}")
 
 
 class _TexHandler(FileSystemEventHandler):
