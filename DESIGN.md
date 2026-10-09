@@ -97,10 +97,16 @@ Key properties of this model:
   are resolved against the glossary and injected into the prompt — giving the
   model the exact definitions it needs regardless of where they appear in the
   document.
-- **Pending questions, not blocking prompts.** When the worker can't proceed
-  without user input (ambiguous role, missing symbol definition), it writes a
-  question to `.tex2code/questions.md` and continues with other units. The
-  researcher answers when convenient; the worker picks up on the next save.
+- **Revisor filters questions before surfacing them.** After the worker raises
+  open questions, a revisor agent searches the document using tools
+  (`search_document`, `get_unit`) and three enriched signals (question
+  rephrasing, LaTeX symbol extraction, dep-graph neighbour traversal) to
+  answer as many as possible.  Only questions with no relevant information in
+  the paper reach `.tex2code/questions.md`.
+- **Pending questions, not blocking prompts.** When the revisor cannot resolve
+  a question, it is written to `.tex2code/questions.md` and processing
+  continues with other units. The researcher answers when convenient; the
+  worker picks up on the next save.
 
 ### LLM layer
 
@@ -157,24 +163,49 @@ This is fresh on every call. Because the watcher only re-calls the LLM when a
 unit's hash changes, the cost of always reading from the file is paid at most
 once per edit, not once per query.
 
-#### Structured generation (classify + implement in one call)
+#### Structured generation — TDD two-pass for spec units
 
-For `spec` units the worker combines classification and implementation into a
-**single LLM call** returning a `UnitResult`:
+For `spec` units the worker uses **two independent LLM calls** to prevent
+circular tests (where the LLM bakes the same arithmetic error into both the
+expected value and the implementation):
+
+**Pass 1 — classify + test-first**
+```python
+# Returns role, confidence, reasoning, test_stub, open_questions.
+# code_stub is intentionally absent — tests are the contract.
+{
+  "role": "spec",
+  "confidence": 0.95,
+  "reasoning": "...",
+  "test_stub": "import numpy as np\ndef test_attention(): ...",
+  "open_questions": []
+}
+```
+The LLM encodes the mathematical spec as pytest tests with expected values
+computed from math arithmetic **in the test body**, never by calling the
+function under test.
+
+**Pass 2 — implement from tests**
+```python
+# Receives the test stub as a contract; returns only code_stub.
+{"code_stub": "def scaled_dot_product_attention(Q, K, V, d_k): ..."}
+```
+The implementation must satisfy the tests from pass 1.  Because the two passes
+are independent, an arithmetic error in pass 1's expected value will cause a
+test failure — the error is visible instead of silently agreed upon.
+
+For non-`spec` units (definition, assumption, result, context), only pass 1
+runs. The full `UnitResult` Pydantic model aggregates both passes:
 
 ```python
 class UnitResult(BaseModel):
     role: Role
     confidence: float
-    reasoning: str          # one sentence — used in explanation output
-    code_stub: str          # Python implementation
-    test_stub: str          # pytest cases derived from the math
-    open_questions: list[str]  # written to .tex2code/questions.md
+    reasoning: str
+    code_stub: str          # from pass 2, empty for non-spec
+    test_stub: str          # from pass 1
+    open_questions: list[str]
 ```
-
-One round-trip per changed unit. The Pydantic model enforces the schema;
-LiteLLM handles the provider. No separate classify → plan → implement chain
-unless the unit is complex enough to warrant it.
 
 ### Core pipeline
 
@@ -461,29 +492,31 @@ scaffolding and how many explanatory comments the implementer generates.
 
 ## Roadmap
 
-**Milestone 1 — Document model (no LLM)** ✓ mostly done
-- [x] Parser → units (with `\input` support)
+**Milestone 1 — Document model (no LLM)** ✓ complete
+- [x] Parser → units (with `\input` / `\include` resolution)
 - [x] Gate: Tier −1 (marker check) + Tier 0 (hash cache)
 - [x] Rule-based role classifier (Tier 2) + keyword scorer (Tier 3)
 - [x] `--mode` flag: `strict` / `scan` / `auto`
 - [x] CLI: `tex2code inspect paper.tex` prints the document model
+- [x] Symbol extraction + dependency graph from `\ref`s and symbols
+- [x] Symbol glossary (definition/assumption units seed it; injected into prompts)
+- [x] Manifest + hash diffing
 - [ ] `tex2code.sty`: `tcprocess`, `implement`, `tcskip`, `tcsymbol`, `tcask`
-- [ ] Symbol extraction + glossary draft
-- [ ] Dependency graph from `\ref`s and symbols
-- [ ] Manifest + hash diffing
 
-**Milestone 2 — Background watcher + LLM worker** ← *next*
-- [ ] `tex2code watch paper.tex` — long-running file watcher (watchdog)
-- [ ] Change detection: re-parse on save, hash-diff, enqueue changed units
-- [ ] Section-scoped context builder (unit + surrounding section → LLM prompt)
-- [ ] `UnitResult` structured output (role + code_stub + test_stub + open_questions)
-- [ ] LLM worker: classify + implement in one call per changed unit (LiteLLM)
-- [ ] Pending-questions mechanism → `.tex2code/questions.md`
-- [ ] Domain calibration: auto-inference + interactive Q&A → `profile.json`
+**Milestone 2 — Background watcher + LLM worker** ✓ largely complete
+- [x] `tex2code watch paper.tex` — long-running file watcher (watchdog, 300 ms debounce)
+- [x] Change detection: re-parse on save, hash-diff, topological sort, process in dep order
+- [x] Section-scoped context builder: ±3 units + glossary injection
+- [x] `UnitResult` structured output (role + code_stub + test_stub + open_questions)
+- [x] TDD worker: pass 1 (classify + test-first), pass 2 (implement from tests)
+- [x] Revisor agent: searches document with tools before writing to `questions.md`
+- [x] Readable file names: section-path derived for unlabelled equations
+- [x] Pending-questions mechanism → `.tex2code/questions.md`
+- [x] Domain calibration: auto-inference + interactive Q&A → `profile.json`
 - [ ] Explanation generator (tutor mode), tone driven by `profile.json`
+- [ ] Cascade-on-change: when a definition unit changes, re-process its dependents
 
 **Milestone 3 — Quality and frontends**
-- [ ] Dependency graph: topological implementation order, cascade on change
 - [ ] Claude Code plugin: skill + subagents + hooks
 - [ ] Docs generation (MkDocs + Mermaid): glossary, spec-map, architecture diagram
 
