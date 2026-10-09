@@ -91,7 +91,7 @@ async def _process_units(
     # Process in dependency order — sequential, not concurrent, so each unit
     # can benefit from the glossary entries added by its predecessors.
     for unit in changed:
-        console.print(f"  [dim]→[/dim] {unit.id}", end=" ")
+        console.print(f"  [dim]→[/dim] {unit.id}")
         try:
             result = await process_unit(
                 unit,
@@ -103,6 +103,9 @@ async def _process_units(
 
             # Revisor pass — filter out questions answerable from the paper.
             if result.open_questions:
+                console.print(
+                    f"    [dim]↳ revising {len(result.open_questions)} question(s)…[/dim]"
+                )
                 revision = await resolve_questions(
                     unit,
                     result.open_questions,
@@ -111,6 +114,10 @@ async def _process_units(
                     _completion=_completion,
                 )
                 if revision.resolved:
+                    console.print(
+                        f"    [dim]↳ resolved {len(revision.resolved)}, "
+                        f"{len(revision.unresolved)} remain[/dim]"
+                    )
                     result = result.model_copy(
                         update={"open_questions": revision.unresolved}
                     )
@@ -125,7 +132,7 @@ async def _process_units(
             conf = f"{result.confidence:.0%}"
             files_note = f"  [dim]({len(written)} file(s))[/dim]" if written else ""
             console.print(
-                f"[{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
+                f"    [dim]role:[/dim] [{role_color}]{result.role}[/{role_color}] {conf}{files_note}"
             )
 
             if result.open_questions:
