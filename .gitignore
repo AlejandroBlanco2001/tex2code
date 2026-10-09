@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+
+# Scratch archives
+*.tar.gz
+*.zip
+
+# Claude Code local settings
+.claude/settings.local.json
