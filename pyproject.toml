@@ -1,17 +1,56 @@
 [project]
 name = "latex-ia"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turns the executable parts of a LaTeX paper into a tested code project"
 readme = "README.md"
 authors = [
     { name = "Isaac Blanco", email = "nuclearhands2001@gmail.com" }
 ]
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.50.0",
+    "pydantic>=2.0",
+    "pylatexenc>=2.10",
+    "typer>=0.27.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+]
+deberta = ["sentence-transformers>=3.0"]
+laya    = ["laya>=0.1"]
 
 [project.scripts]
-latex-ia = "latex_ia:main"
+tex2code = "latex_ia.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.2,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+line-length    = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
+markers   = [
+    "integration: acceptance tests against real paper sources (slower)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.10",
+]
