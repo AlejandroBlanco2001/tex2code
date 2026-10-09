@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>tex2code — {{ filename }}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/highlight.min.css">
 </head>
 <body>
   <header class="app-header">
@@ -14,6 +15,12 @@
       <span class="app-header__sep">·</span>
       <span class="app-header__model">{{ model }}</span>
     </div>
+    <nav class="tab-nav">
+      <button class="tab-btn tab-btn--active" data-tab="activity" onclick="switchTab('activity')">Activity</button>
+      <button class="tab-btn" data-tab="paper" onclick="switchTab('paper')">Paper</button>
+      <button class="tab-btn" data-tab="notation" onclick="switchTab('notation')">Notation</button>
+      <a class="tab-btn tab-btn--export" href="/export/notebook" download>↓ Notebook</a>
+    </nav>
     <div class="app-header__status">
       <span class="status-dot" id="status-dot"></span>
       <span class="status-label" id="status-label">connecting…</span>
@@ -21,46 +28,66 @@
   </header>
 
   <main class="app-main">
-    <section class="panel panel--activity">
-      <div class="panel__header" id="activity-header">
-        Activity
-        <span class="processing-indicator" aria-label="Processing"></span>
-      </div>
-      <div class="panel__body">
-        <div id="activity-list"></div>
-        <div id="activity-empty" class="empty-state">Waiting for .tex saves…</div>
-      </div>
-    </section>
+    <!-- Activity tab -->
+    <div id="tab-activity" class="tab-content tab-content--dual">
+      <section class="panel panel--activity">
+        <div class="panel__header" id="activity-header">
+          Activity
+          <span class="processing-indicator" aria-label="Processing"></span>
+        </div>
+        <div class="panel__body">
+          <div id="activity-list"></div>
+          <div id="activity-empty" class="empty-state">Waiting for .tex saves…</div>
+        </div>
+      </section>
 
-    <section class="panel panel--questions">
-      <div class="panel__header">
-        Open Questions
-        <span class="question-count" id="question-count"></span>
+      <section class="panel panel--questions">
+        <div class="panel__header">
+          Open Questions
+          <span class="question-count" id="question-count"></span>
+        </div>
+        <div class="panel__body">
+          <div id="questions-list"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Paper tab -->
+    <div id="tab-paper" class="tab-content tab-content--full hidden">
+      <div id="paper-content" class="full-panel">
+        <div class="empty-state">Loading…</div>
       </div>
-      <div class="panel__body">
-        <div id="questions-list"></div>
+    </div>
+
+    <!-- Notation tab -->
+    <div id="tab-notation" class="tab-content tab-content--full hidden">
+      <div id="notation-content" class="full-panel">
+        <div class="empty-state">Loading…</div>
       </div>
-    </section>
+    </div>
   </main>
 
-  <div class="overlay" id="overlay" onclick="closeSource()"></div>
+  <!-- Unit split-view overlay -->
+  <div class="overlay" id="overlay" onclick="closeUnit()"></div>
   <aside class="source-drawer" id="source-drawer">
-    <button class="source-drawer__close" onclick="closeSource()" aria-label="Close">✕</button>
+    <button class="source-drawer__close" onclick="closeUnit()" aria-label="Close">✕</button>
     <div class="source-drawer__body" id="source-content"></div>
   </aside>
 
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/highlight.min.js"></script>
   <script>
+    // ── SSE ──────────────────────────────────────────────────────────────
     const evtSource = new EventSource('/events');
-    const activityList = document.getElementById('activity-list');
-    const activityEmpty = document.getElementById('activity-empty');
-    const questionsList = document.getElementById('questions-list');
-    const questionCount = document.getElementById('question-count');
-    const statusDot = document.getElementById('status-dot');
-    const statusLabel = document.getElementById('status-label');
+    const activityList   = document.getElementById('activity-list');
+    const activityEmpty  = document.getElementById('activity-empty');
+    const questionsList  = document.getElementById('questions-list');
+    const questionCount  = document.getElementById('question-count');
+    const statusDot      = document.getElementById('status-dot');
+    const statusLabel    = document.getElementById('status-label');
 
     function setConnected(ok) {
-      statusDot.className = 'status-dot ' + (ok ? 'status-dot--ok' : 'status-dot--err');
+      statusDot.className  = 'status-dot ' + (ok ? 'status-dot--ok' : 'status-dot--err');
       statusLabel.textContent = ok ? 'watching' : 'disconnected';
     }
 
@@ -84,26 +111,61 @@
       document.getElementById('activity-header').classList.remove('processing');
     });
 
-    evtSource.onopen = () => setConnected(true);
+    evtSource.onopen  = () => setConnected(true);
     evtSource.onerror = () => setConnected(false);
 
-    function openSource(unitId) {
-      fetch('/source/' + encodeURIComponent(unitId))
+    // ── Tab navigation ────────────────────────────────────────────────────
+    function switchTab(name) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn[data-tab]').forEach(el => el.classList.remove('tab-btn--active'));
+      document.getElementById('tab-' + name).classList.remove('hidden');
+      const btn = document.querySelector('[data-tab="' + name + '"]');
+      if (btn) btn.classList.add('tab-btn--active');
+
+      if (name === 'paper') {
+        fetch('/paper').then(r => r.text()).then(html => {
+          document.getElementById('paper-content').innerHTML = html;
+        });
+      }
+      if (name === 'notation') {
+        fetch('/notation').then(r => r.text()).then(html => {
+          document.getElementById('notation-content').innerHTML = html;
+        });
+      }
+    }
+
+    // ── Unit split view ───────────────────────────────────────────────────
+    function openUnit(unitId) {
+      fetch('/unit/' + encodeURIComponent(unitId))
         .then(r => r.text())
         .then(html => {
-          document.getElementById('source-content').innerHTML = html;
+          const el = document.getElementById('source-content');
+          el.innerHTML = html;
+          htmx.process(el);
+          hljs.highlightAll();
           document.getElementById('source-drawer').classList.add('open');
           document.getElementById('overlay').classList.add('visible');
         });
     }
 
-    function closeSource() {
+    function closeUnit() {
       document.getElementById('source-drawer').classList.remove('open');
       document.getElementById('overlay').classList.remove('visible');
     }
 
+    // Keep legacy alias used in activity_item template
+    function openSource(unitId) { openUnit(unitId); }
+
+    function showCodeTab(btn, tabId) {
+      const pane = btn.closest('.unit-pane--code');
+      pane.querySelectorAll('.source-pre').forEach(el => el.classList.add('hidden'));
+      pane.querySelectorAll('.pane-tab').forEach(el => el.classList.remove('pane-tab--active'));
+      document.getElementById(tabId).classList.remove('hidden');
+      btn.classList.add('pane-tab--active');
+    }
+
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeSource();
+      if (e.key === 'Escape') closeUnit();
     });
   </script>
 </body>

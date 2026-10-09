@@ -1,0 +1,39 @@
+<div class="unit-view">
+  <div class="unit-view__header">
+    <span class="unit-id">{{ unit_id }}</span>
+    <span class="role-badge role-badge--{{ role }}">{{ role }}</span>
+    {% if not code %}
+    <button class="btn btn--mark"
+            hx-post="/units/{{ unit_id }}/mark"
+            hx-target="this"
+            hx-swap="outerHTML">
+      Mark for processing
+    </button>
+    {% endif %}
+  </div>
+  <div class="unit-view__panes">
+    <div class="unit-pane">
+      <div class="pane-label">LaTeX source</div>
+      <pre class="source-pre"><code class="language-latex">{{ raw }}</code></pre>
+    </div>
+    <div class="unit-pane unit-pane--code">
+      <div class="pane-label">
+        {% if code %}
+        <button class="pane-tab pane-tab--active" onclick="showCodeTab(this,'impl-{{ unit_id | replace(':','-') | replace('/','_') }}')">Implementation</button>
+        <button class="pane-tab" onclick="showCodeTab(this,'test-{{ unit_id | replace(':','-') | replace('/','_') }}')">Tests</button>
+        {% else %}
+        <span class="pane-tab pane-tab--active">Code</span>
+        {% endif %}
+      </div>
+      {% if code %}
+      <pre class="source-pre" id="impl-{{ unit_id | replace(':','-') | replace('/','_') }}"><code class="language-python">{{ code }}</code></pre>
+      <pre class="source-pre hidden" id="test-{{ unit_id | replace(':','-') | replace('/','_') }}"><code class="language-python">{{ tests }}</code></pre>
+      {% else %}
+      <div class="pane-empty">
+        Not yet generated.
+        {% if not code %}Press <strong>Mark for processing</strong> and save the .tex file to generate code.{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>

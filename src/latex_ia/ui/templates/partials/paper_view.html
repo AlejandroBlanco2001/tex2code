@@ -1,0 +1,26 @@
+<div class="paper-view">
+  <div class="paper-view__toolbar">
+    <h2>Paper</h2>
+    <span class="paper-view__hint">Click any unit to view LaTeX &amp; generated code side by side</span>
+  </div>
+  {% if not sections %}
+  <div class="empty-state">No units found. Make sure the .tex file has been saved.</div>
+  {% else %}
+  {% for section, units in sections.items() %}
+  <div class="paper-section">
+    <div class="paper-section__heading">{{ section if section else "Preamble" }}</div>
+    {% for u in units %}
+    <div class="paper-unit paper-unit--{{ u.role }}" onclick="openUnit('{{ u.id | e }}')">
+      <div class="paper-unit__meta">
+        <span class="role-badge role-badge--{{ u.role }}">{{ u.role }}</span>
+        <span class="unit-id">{{ u.id }}</span>
+        {% if u.marked %}<span class="marked-badge">marked</span>{% endif %}
+        {% if u.has_code %}<span class="code-badge">✓ code</span>{% endif %}
+      </div>
+      <div class="paper-unit__preview">{{ u.preview }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

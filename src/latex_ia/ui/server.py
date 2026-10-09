@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections import defaultdict
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 
@@ -82,26 +84,56 @@ def create_app(bus: EventBus, tex_path: Path, profile) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+    # ── Main page ──────────────────────────────────────────────────────────
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
-        html = _render(
-            "index.html",
-            filename=tex_path.name,
-            model=profile.model,
-        )
+        html = _render("index.html", filename=tex_path.name, model=profile.model)
         return HTMLResponse(html)
+
+    # ── SSE ────────────────────────────────────────────────────────────────
 
     @app.get("/events")
     async def events(request: Request) -> StreamingResponse:
         return StreamingResponse(
             _event_stream(request, bus),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    # ── Unit split view ────────────────────────────────────────────────────
+
+    @app.get("/unit/{unit_id:path}", response_class=HTMLResponse)
+    async def unit_view(unit_id: str) -> HTMLResponse:
+        from latex_ia.manifest import load as load_manifest
+
+        raw = bus.sources.get(unit_id, "")
+        manifest = load_manifest()
+        entry = manifest.entries.get(unit_id)
+        role = entry.role.value if entry else "unknown"
+        code_content = ""
+        test_content = ""
+        if entry and entry.code:
+            with contextlib.suppress(OSError):
+                code_content = Path(entry.code[0]).read_text(encoding="utf-8")
+        if entry and entry.tests:
+            with contextlib.suppress(OSError):
+                test_content = Path(entry.tests[0]).read_text(encoding="utf-8")
+        if not raw and not code_content:
+            return HTMLResponse(
+                "<p class='source-missing'>Unit not available.</p>", status_code=404
+            )
+        html = _render(
+            "partials/unit_split_view.html",
+            unit_id=unit_id,
+            raw=raw,
+            code=code_content,
+            tests=test_content,
+            role=role,
+        )
+        return HTMLResponse(html)
+
+    # Keep legacy /source route for backwards compat
     @app.get("/source/{unit_id:path}", response_class=HTMLResponse)
     async def source(unit_id: str) -> HTMLResponse:
         raw = bus.sources.get(unit_id)
@@ -111,6 +143,91 @@ def create_app(bus: EventBus, tex_path: Path, profile) -> FastAPI:
             )
         html = _render("partials/source_panel.html", unit_id=unit_id, raw=raw)
         return HTMLResponse(html)
+
+    # ── Unit marking ───────────────────────────────────────────────────────
+
+    @app.post("/units/{unit_id:path}/mark", response_class=HTMLResponse)
+    async def mark_unit(unit_id: str) -> HTMLResponse:
+        from latex_ia.ui.marker import mark_unit_in_file
+
+        raw = bus.sources.get(unit_id, "")
+        ok = False
+        if raw and tex_path.exists():
+            ok = mark_unit_in_file(tex_path, raw)
+        if ok:
+            return HTMLResponse(
+                '<span class="badge badge--marked">✓ marked — save the file to process</span>'
+            )
+        return HTMLResponse('<span class="badge badge--marked">already marked</span>')
+
+    # ── Paper explorer ─────────────────────────────────────────────────────
+
+    @app.get("/paper", response_class=HTMLResponse)
+    async def paper_view() -> HTMLResponse:
+        from latex_ia.manifest import load as load_manifest
+        from latex_ia.parser import parse_document
+
+        parsed = parse_document(tex_path)
+        manifest = load_manifest()
+        sections: dict[str, list] = defaultdict(list)
+        for unit in parsed.units:
+            section = " › ".join(unit.section_path) if unit.section_path else ""
+            entry = manifest.entries.get(unit.id)
+            role = entry.role.value if entry else "unknown"
+            sections[section].append(
+                {
+                    "id": unit.id,
+                    "role": role,
+                    "marked": unit.marked,
+                    "has_code": bool(entry and entry.code),
+                    "preview": unit.raw.strip()[:140].replace("\n", " "),
+                }
+            )
+        html = _render("partials/paper_view.html", sections=dict(sections))
+        return HTMLResponse(html)
+
+    # ── Notation guide ─────────────────────────────────────────────────────
+
+    @app.get("/notation", response_class=HTMLResponse)
+    async def notation_page() -> HTMLResponse:
+        from latex_ia.manifest import load as load_manifest
+        from latex_ia.parser import parse_document
+
+        parsed = parse_document(tex_path)
+        manifest = load_manifest()
+        rows = _notation_rows(parsed.units, manifest)
+        html = _render("partials/notation_view.html", rows=rows)
+        return HTMLResponse(html)
+
+    @app.get("/notation/download")
+    async def notation_download() -> FileResponse:
+        from latex_ia.manifest import load as load_manifest
+        from latex_ia.notation import write_notation_guide
+        from latex_ia.parser import parse_document
+
+        parsed = parse_document(tex_path)
+        manifest = load_manifest()
+        path = write_notation_guide(parsed.units, manifest)
+        return FileResponse(str(path), filename="notation.md", media_type="text/markdown")
+
+    # ── Jupyter export ─────────────────────────────────────────────────────
+
+    @app.get("/export/notebook")
+    async def export_notebook() -> FileResponse:
+        from latex_ia.manifest import load as load_manifest
+        from latex_ia.notebook import write_notebook
+        from latex_ia.parser import parse_document
+
+        parsed = parse_document(tex_path)
+        manifest = load_manifest()
+        path = write_notebook(parsed.units, manifest, title=tex_path.stem)
+        return FileResponse(
+            str(path),
+            filename=f"{tex_path.stem}_notebook.ipynb",
+            media_type="application/x-ipynb+json",
+        )
+
+    # ── Questions ──────────────────────────────────────────────────────────
 
     @app.post("/questions/answer", response_class=HTMLResponse)
     async def answer_question(
@@ -150,3 +267,30 @@ def create_app(bus: EventBus, tex_path: Path, profile) -> FastAPI:
         return HTMLResponse("", status_code=204)
 
     return app
+
+
+def _notation_rows(units, manifest) -> list[dict]:
+    """Build notation table rows (plain dicts) for the template."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for unit in units:
+        if not unit.symbols:
+            continue
+        entry = manifest.entries.get(unit.id)
+        role = entry.role.value if entry else "unknown"
+        code_file = Path(entry.code[0]).name if (entry and entry.code) else "—"
+        section = " › ".join(unit.section_path) if unit.section_path else "—"
+        for sym in sorted(unit.symbols):
+            if sym in seen:
+                continue
+            seen.add(sym)
+            rows.append(
+                {
+                    "symbol": sym,
+                    "unit_id": unit.id,
+                    "role": role,
+                    "section": section,
+                    "code_file": code_file,
+                }
+            )
+    return rows
