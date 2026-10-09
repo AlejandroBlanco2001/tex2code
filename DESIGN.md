@@ -68,13 +68,12 @@ re-parse changed file tree → compute hashes
         └─ hash changed or new unit
                 │
                 ▼
-          queue unit for processing
+          build dependency graph → topological sort
                 │
                 ▼
-          worker: classify → plan → implement → test → explain
-                │
-                ▼
-          write code + tests to disk; update manifest
+          process in dependency order:
+            resolve glossary → build context → LLM call
+            update glossary → write output → update manifest
                 │
                 ▼
           surface result (terminal / plugin notification)
@@ -89,10 +88,15 @@ Key properties of this model:
 - **No RAG, no stale index.** The LaTeX file *is* the source of truth. The
   watcher re-parses on every save; the LLM receives fresh content every time.
   There is no vector store to keep in sync.
-- **Section-scoped context window.** When classifying or implementing a unit,
-  the worker sends the unit plus its surrounding section to the LLM — not the
-  whole paper. This gives the model enough context (section title, adjacent
-  paragraphs, related equations) without requiring retrieval.
+- **Topological processing order.** Changed units are sorted by their dependency
+  graph before processing, so definition and assumption units are always handled
+  before the spec units that use their symbols. The LLM never encounters an
+  undefined symbol.
+- **Symbol glossary injection.** A running glossary maps symbol names to the raw
+  LaTeX of their defining units. Before each LLM call the target unit's symbols
+  are resolved against the glossary and injected into the prompt — giving the
+  model the exact definitions it needs regardless of where they appear in the
+  document.
 - **Pending questions, not blocking prompts.** When the worker can't proceed
   without user input (ambiguous role, missing symbol definition), it writes a
   question to `.tex2code/questions.md` and continues with other units. The
@@ -124,18 +128,30 @@ the Pydantic result models — the migration surface is small.
 
 #### Context window strategy (no RAG)
 
-Each LLM call receives a **section-scoped slice** of the document, built at
-call time from the parsed document tree — no vector store, no pre-indexing.
+Each LLM call receives a context built from two complementary sources,
+assembled at call time from the parsed document tree — no vector store,
+no pre-indexing, no stale index.
 
 ```
 system:  profile.json (field, tone, education_level, spec_heuristics)
-         glossary snapshot (symbols seen so far)
 
-user:    section title + path  (e.g. "4. Model / 4.2 Encoder")
-         surrounding paragraphs (± N units around the target)
-         target unit (raw LaTeX + label)
+user:    [positional window]
+           section title + path  (e.g. "4. Model / 4.2 Encoder")
+           ± 3 units around the target in document order
+
+         [glossary injection]
+           raw LaTeX of definition/assumption units whose symbols
+           appear in the target unit — resolved from the live glossary,
+           regardless of where they appear in the document
+
+         target unit (raw LaTeX + label)  ← TARGET
          task: "classify" | "implement" | "explain"
 ```
+
+**Dependency graph + topological order** ensure the glossary is populated
+before it is needed: definition units are always processed before the spec
+units that depend on them.  Edges are derived from explicit `\ref` links
+and from symbol co-occurrence with known definition units.
 
 This is fresh on every call. Because the watcher only re-calls the LLM when a
 unit's hash changes, the cost of always reading from the file is paid at most
