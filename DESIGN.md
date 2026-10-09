@@ -35,8 +35,68 @@ A **headless core** with thin frontends on top, so the UI decision
                 ┌─────▼─────────────────▼─────┐
                 │            core             │
                 │     (Python, LiteLLM)       │
-                └─────────────────────────────┘
+                └───────────┬─────────────────┘
+                            │
+               ┌────────────▼────────────┐
+               │       watcher loop      │  ← long-running background process
+               │  detect → hash → queue  │
+               └────────────┬────────────┘
+                            │
+               ┌────────────▼────────────┐
+               │    processing worker    │
+               │ classify → plan → impl  │
+               └─────────────────────────┘
 ```
+
+### Background processing model
+
+`tex2code watch paper.tex` is the **primary UX** — not a one-shot command.
+The researcher writes LaTeX; the process runs in the background and reacts to
+every save.
+
+```
+researcher saves paper.tex
+        │
+        ▼
+file watcher (watchdog) detects change
+        │
+        ▼
+re-parse changed file tree → compute hashes
+        │
+        ├─ hash unchanged → skip (Tier 0, zero cost)
+        │
+        └─ hash changed or new unit
+                │
+                ▼
+          queue unit for processing
+                │
+                ▼
+          worker: classify → plan → implement → test → explain
+                │
+                ▼
+          write code + tests to disk; update manifest
+                │
+                ▼
+          surface result (terminal / plugin notification)
+```
+
+Key properties of this model:
+
+- **Always-on, never blocking.** The researcher keeps writing; code updates
+  arrive asynchronously in the background.
+- **Incremental by design.** The hash cache (Tier 0) means only changed units
+  cost anything. A stable section is processed exactly once in its lifetime.
+- **No RAG, no stale index.** The LaTeX file *is* the source of truth. The
+  watcher re-parses on every save; the LLM receives fresh content every time.
+  There is no vector store to keep in sync.
+- **Section-scoped context window.** When classifying or implementing a unit,
+  the worker sends the unit plus its surrounding section to the LLM — not the
+  whole paper. This gives the model enough context (section title, adjacent
+  paragraphs, related equations) without requiring retrieval.
+- **Pending questions, not blocking prompts.** When the worker can't proceed
+  without user input (ambiguous role, missing symbol definition), it writes a
+  question to `.tex2code/questions.md` and continues with other units. The
+  researcher answers when convenient; the worker picks up on the next save.
 
 ### LLM layer
 
@@ -61,6 +121,44 @@ result back → repeat) lives in core and is not delegated to a framework.
 orchestration, dynamic tool discovery, or long-horizon planning, the core can
 adopt **PydanticAI** on top of LiteLLM without changing the provider layer or
 the Pydantic result models — the migration surface is small.
+
+#### Context window strategy (no RAG)
+
+Each LLM call receives a **section-scoped slice** of the document, built at
+call time from the parsed document tree — no vector store, no pre-indexing.
+
+```
+system:  profile.json (field, tone, education_level, spec_heuristics)
+         glossary snapshot (symbols seen so far)
+
+user:    section title + path  (e.g. "4. Model / 4.2 Encoder")
+         surrounding paragraphs (± N units around the target)
+         target unit (raw LaTeX + label)
+         task: "classify" | "implement" | "explain"
+```
+
+This is fresh on every call. Because the watcher only re-calls the LLM when a
+unit's hash changes, the cost of always reading from the file is paid at most
+once per edit, not once per query.
+
+#### Structured generation (classify + implement in one call)
+
+For `spec` units the worker combines classification and implementation into a
+**single LLM call** returning a `UnitResult`:
+
+```python
+class UnitResult(BaseModel):
+    role: Role
+    confidence: float
+    reasoning: str          # one sentence — used in explanation output
+    code_stub: str          # Python implementation
+    test_stub: str          # pytest cases derived from the math
+    open_questions: list[str]  # written to .tex2code/questions.md
+```
+
+One round-trip per changed unit. The Pydantic model enforces the schema;
+LiteLLM handles the provider. No separate classify → plan → implement chain
+unless the unit is complex enough to warrant it.
 
 ### Core pipeline
 
@@ -347,32 +445,34 @@ scaffolding and how many explanatory comments the implementer generates.
 
 ## Roadmap
 
-**Milestone 1 — Document model (no LLM)**
-- [ ] Parser → units (with `\input` support)
+**Milestone 1 — Document model (no LLM)** ✓ mostly done
+- [x] Parser → units (with `\input` support)
+- [x] Gate: Tier −1 (marker check) + Tier 0 (hash cache)
+- [x] Rule-based role classifier (Tier 2) + keyword scorer (Tier 3)
+- [x] `--mode` flag: `strict` / `scan` / `auto`
+- [x] CLI: `tex2code inspect paper.tex` prints the document model
 - [ ] `tex2code.sty`: `tcprocess`, `implement`, `tcskip`, `tcsymbol`, `tcask`
-- [ ] Gate: Tier −1 (marker check) + Tier 0 (hash cache) — units without markers never proceed
-- [ ] Rule-based role classifier (Tier 2) + structural rules
-- [ ] Keyword scorer (Tier 3) with initial English academic vocabulary list
 - [ ] Symbol extraction + glossary draft
 - [ ] Dependency graph from `\ref`s and symbols
-- [ ] Manifest + hash diffing (only marked blocks recorded)
-- [ ] CLI: `tex2code inspect paper.tex` prints the document model
-- [ ] Sample paper in `examples/` + tests (exercises every marker type and role)
+- [ ] Manifest + hash diffing
 
-**Milestone 2 — Agent loop**
+**Milestone 2 — Background watcher + LLM worker** ← *next*
+- [ ] `tex2code watch paper.tex` — long-running file watcher (watchdog)
+- [ ] Change detection: re-parse on save, hash-diff, enqueue changed units
+- [ ] Section-scoped context builder (unit + surrounding section → LLM prompt)
+- [ ] `UnitResult` structured output (role + code_stub + test_stub + open_questions)
+- [ ] LLM worker: classify + implement in one call per changed unit (LiteLLM)
+- [ ] Pending-questions mechanism → `.tex2code/questions.md`
 - [ ] Domain calibration: auto-inference + interactive Q&A → `profile.json`
-- [ ] LLM classifier for ambiguous units (role + confidence), informed by `profile.json`
-- [ ] Planner: spec unit → implementation plan
-- [ ] Implementer + test runner (LiteLLM + plain tool loop)
-- [ ] Explanation generator (tutor mode), tone and depth driven by `profile.json`
+- [ ] Explanation generator (tutor mode), tone driven by `profile.json`
 
-**Milestone 3 — Frontends and modes**
+**Milestone 3 — Quality and frontends**
+- [ ] Dependency graph: topological implementation order, cascade on change
 - [ ] Claude Code plugin: skill + subagents + hooks
-- [ ] Background watcher + pending-questions mechanism
-- [ ] Docs generation (MkDocs + Mermaid)
+- [ ] Docs generation (MkDocs + Mermaid): glossary, spec-map, architecture diagram
 
 **Milestone 4 — Later**
-- [ ] VS Code extension (side panels: explanations, docs, questions)
-- [ ] Write results back to LaTeX (`\input` tables/figures)
-- [ ] Reference fetching: Semantic Scholar / arXiv → prior-work context block in `profile.json`
+- [ ] VS Code extension (side panels: explanations, pending questions, docs)
+- [ ] Write results back to LaTeX (`\input` tables/figures from code outputs)
+- [ ] Reference fetching: Semantic Scholar / arXiv → prior-work context in `profile.json`
 - [ ] Evaluate Electron only if non-coder UX demands it
