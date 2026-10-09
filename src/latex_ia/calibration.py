@@ -1,3 +1,5 @@
+"""Domain calibration — auto-infer profile fields and run interactive Q&A."""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +12,9 @@ from rich.panel import Panel
 from latex_ia.models import Profile
 
 console = Console()
+
+_RE_ALGORITHM = re.compile(r"\\begin\{algorithm")
+_RE_EQ_LABEL = re.compile(r"\\label\{eq:")
 
 # Style files → known venue/field hints
 _STYLE_HINTS: dict[str, dict] = {
@@ -59,9 +64,9 @@ def infer_from_source(tex_path: Path) -> Profile:
 
     # Spec heuristics from document structure
     heuristics: list[str] = []
-    if re.search(r"\\begin\{algorithm", src):
+    if _RE_ALGORITHM.search(src):
         heuristics.append("algorithms-are-spec")
-    if re.search(r"\\label\{eq:", src):
+    if _RE_EQ_LABEL.search(src):
         heuristics.append("labeled-equations-are-spec")
     if heuristics:
         profile = profile.model_copy(update={"spec_heuristics": heuristics})
@@ -82,7 +87,7 @@ def run_interactive(profile: Profile) -> Profile:
 
     updates: dict = {}
 
-    field = typer.prompt(f"Research field / subfield", default=profile.field)
+    field = typer.prompt("Research field / subfield", default=profile.field)
     updates["field"] = field
 
     edu = typer.prompt(

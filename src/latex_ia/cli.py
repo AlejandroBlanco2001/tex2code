@@ -13,7 +13,7 @@ from latex_ia.classifier.keyword import KeywordScorer
 from latex_ia.classifier.rules import RuleClassifier
 from latex_ia.manifest import load as load_manifest
 from latex_ia.models import ClassificationResult, ProcessMode, Role
-from latex_ia.parser.latex_parser import ParseResult, _parse_source, _resolve_source
+from latex_ia.parser import parse_document
 from latex_ia.profile import load as load_profile, save as save_profile
 from latex_ia.watcher import watch as run_watch
 
@@ -51,9 +51,7 @@ def inspect(
     mode: ProcessMode = typer.Option(ProcessMode.strict, "--mode", "-m", help=_MODE_HELP),  # noqa: B008
 ) -> None:
     """Print the document model for a .tex file."""
-    parse_result = ParseResult()
-    source = _resolve_source(file, parse_result, depth=0)
-    _parse_source(source, parse_result)
+    parse_result = parse_document(file)
     units = parse_result.units
 
     if parse_result.warnings:
